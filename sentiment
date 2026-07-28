@@ -146,9 +146,9 @@ def compute_market_sentiment(fii_cash=None, dii_cash=None, fii_fno_index=None,
     elif total >= 2:
         label, color = "Bullish", "#16a34a"
     elif total <= -6:
-        label, color = "Strongly Bearish", "#dc2626"
+        label, color = "Strongly Bearish", "#b91c1c"
     elif total <= -2:
-        label, color = "Bearish", "#dc2626"
+        label, color = "Bearish", "#b91c1c"
     else:
         label, color = "Neutral", "#6b7280"
 
