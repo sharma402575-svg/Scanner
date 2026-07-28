@@ -56,7 +56,7 @@ def style_row(val):
     if val in ("Bullish", "Up", "Buy", "Strong Buy", "Strongly Bullish", True):
         return "color: #16a34a; font-weight: 600"
     if val in ("Bearish", "Down", "Sell", "Strong Sell", "Strongly Bearish"):
-        return "color: #dc2626; font-weight: 600"
+        return "color: #b91c1c; font-weight: 600"
     return ""
 
 
@@ -94,7 +94,7 @@ overall = bundle["overall"]
 f = bundle["freshness"]
 alerts = bundle["alerts"]
 
-signal_colors = {"Buy": ("#16a34a", "🟢"), "Sell": ("#dc2626", "🔴"), "Neutral": ("#6b7280", "⚪")}
+signal_colors = {"Buy": ("#16a34a", "🟢"), "Sell": ("#b91c1c", "🔴"), "Neutral": ("#6b7280", "⚪")}
 color, dot = signal_colors.get(overall["label"], ("#6b7280", "⚪"))
 
 sig_col, alert_col = st.columns([1, 2])
@@ -107,7 +107,7 @@ with sig_col:
             <div style="font-size: 12px; margin-top: 4px;">
                 Score <b>{overall['avg_score']}</b> ·
                 <span style="color:#16a34a">Buy {overall['pct_buy']}%</span> ·
-                <span style="color:#dc2626">Sell {overall['pct_sell']}%</span> ·
+                <span style="color:#b91c1c">Sell {overall['pct_sell']}%</span> ·
                 Hold {overall['pct_hold']}%
             </div>
         </div>
