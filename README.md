@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/30439729/README.md)
+[README.md](https://github.com/user-attachments/files/30440954/README.md)
 # Sector Trade Scanner
 
 A stock scanner (NSE, India) with six views:
