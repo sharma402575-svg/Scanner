@@ -45,8 +45,6 @@ with st.sidebar:
         "breakdown (±1). Score ≥4 Strong Buy, ≥2 Buy, ≤-4 Strong Sell, ≤-2 "
         "Sell, else Hold. Rules-based heuristic — not financial advice."
     )
-    st.divider()
-    st.page_link("pages/1_FII_DII_and_Sentiment.py", label="🧾 FII/DII & Sentiment", icon="➡️")
 
 if auto_refresh:
     st_autorefresh(interval=interval_min * 60 * 1000, key="auto_refresh_timer")
