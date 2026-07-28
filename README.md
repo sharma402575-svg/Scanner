@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/30445150/README.md)
+[README.md](https://github.com/user-attachments/files/30447823/README.md)
 # Sector Trade Scanner
 
 A single-page NSE (India) stock scanner. One click refreshes everything
@@ -58,6 +58,47 @@ Score ≥ 4 → **Strong Buy** · ≥ 2 → **Buy** · -1 to 1 → **Hold** ·
 Rules-based heuristic combining common technical factors — not financial
 advice, and has no knowledge of news, earnings, or fundamentals.
 
+## Pages
+
+This is a proper multi-page Streamlit app — two separate pages, each with
+its own URL, linked from the sidebar:
+
+- **Live Scanner** (`app.py`) — everything from R Factor ranking to
+  sector overview.
+- **FII/DII & Sentiment** (`pages/1_FII_DII_and_Sentiment.py`) — manual
+  data entry, completely separate page. Refreshing or auto-refreshing the
+  Live Scanner page never touches this one — it only updates when you
+  click its own "Compute Sentiment" button. You can right-click its
+  sidebar link and "open in new tab" for a true separate browser tab.
+
+## FII/DII & Sentiment page (manual entry)
+
+FII/DII flows, PCR, VIX, market breadth, and stock-wise F&O open-interest
+data are **not available from free data sources** — Yahoo Finance doesn't
+carry them. This page lets you type in whatever numbers you have (any
+field can be left blank).
+
+**Market-wide inputs**: FII Cash Net, DII Cash Net, FII F&O Index Net,
+FII Long % in Index Futures, Nifty PCR, India VIX, Advance/Decline Ratio.
+Each is scored with published, standard interpretations (e.g. PCR > 1.3 =
+bullish tilt, VIX > 22 = high fear/bearish) and combined into one
+Bullish/Bearish/Neutral reading, with a "Show logic" expander giving a
+plain-English line for every number you entered.
+
+**Stock-wise F&O data** (optional, collapsed by default): paste
+`TICKER, % price change, % OI change` per line, classified into:
+- Price↑ + OI↑ → **Long Buildup** (bullish — new longs entering)
+- Price↑ + OI↓ → **Short Covering** (bullish — shorts exiting)
+- Price↓ + OI↑ → **Short Buildup** (bearish — new shorts entering)
+- Price↓ + OI↓ → **Long Unwinding** (bearish — longs exiting)
+
+**History**: every time you click "Compute Sentiment", the reading is
+logged (collapsed by default, most recent first, capped at last 20).
+Click any entry to expand and see the inputs and logic used at that time.
+Note: this history lives only in your current browser session — it resets
+if you close the tab or the app restarts. It is not saved permanently
+(that would need a database, which isn't set up here).
+
 ## Dates & times
 
 All dates are shown as **dd-mm-yyyy**. The "last fetched" time and
@@ -77,7 +118,14 @@ regardless of what timezone the app happens to be hosted in.
 - `scanner.py` — `build_master_table()` computes every metric once;
   `view_*` functions filter/sort it; `overall_market_signal()` and
   `alerts_summary()` power the top banner.
-- `app.py` — the single-page Streamlit dashboard.
+- `sentiment.py` — manual FII/DII/PCR/VIX/breadth scoring and F&O OI
+  buildup classification, used by the sentiment page.
+- `app.py` — the Live Scanner page (Streamlit's "main" page — this is
+  the file you deploy/run).
+- `pages/1_FII_DII_and_Sentiment.py` — the FII/DII & Sentiment page.
+  Streamlit auto-detects anything in a `pages/` folder next to `app.py`
+  and turns it into a separate page with its own URL and sidebar link —
+  no extra setup needed.
 - `requirements.txt` — Python packages needed (includes `tzdata` so the
   IST timezone resolves correctly on any hosting environment).
 
