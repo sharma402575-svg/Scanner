@@ -61,6 +61,21 @@ def _atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) ->
     return float(tr.rolling(period).mean().iloc[-1])
 
 
+def check_data_freshness():
+    """
+    Lightweight check: fetches just one index ticker to see the most
+    recent bar date available from Yahoo Finance, without downloading the
+    full universe. Use this to show the user 'data as of <date>' so a
+    market-closed mismatch is understood as a sync delay, not a bug.
+    """
+    import datetime
+    sample = fetch_history(["^NSEBANK"], period="5d")
+    date_str = last_data_date(sample)
+    today_str = str(datetime.date.today())
+    is_stale = date_str != today_str
+    return {"last_data_date": date_str, "today": today_str, "is_stale": is_stale}
+
+
 def all_tickers_flat():
     """Every stock across every sector, with its sector tag."""
     out = []
@@ -77,7 +92,7 @@ def fetch_history(tickers, period="6mo", interval="1d"):
         period=period,
         interval=interval,
         group_by="ticker",
-        auto_adjust=True,
+        auto_adjust=False,  # raw close, matches official NSE prices (adjusted close can differ)
         threads=True,
         progress=False,
     )
@@ -88,6 +103,19 @@ def _col(data, ticker, field):
         return data[ticker][field].dropna()
     except Exception:
         return pd.Series(dtype=float)
+
+
+def last_data_date(raw) -> str:
+    """
+    The date of the most recent bar actually present in the fetched data.
+    Compare this to today's date — if it's not today (or not the last
+    trading day), Yahoo Finance hasn't synced the latest session yet and
+    any 'today' numbers you see are stale, not wrong maths.
+    """
+    try:
+        return str(raw.index[-1].date())
+    except Exception:
+        return "unknown"
 
 
 # ---------- sector-scoped scan ----------
