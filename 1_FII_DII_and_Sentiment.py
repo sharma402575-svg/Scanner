@@ -26,7 +26,7 @@ def style_row(val):
     if val in ("Bullish", "Strongly Bullish"):
         return "color: #16a34a; font-weight: 600"
     if val in ("Bearish", "Strongly Bearish"):
-        return "color: #dc2626; font-weight: 600"
+        return "color: #b91c1c; font-weight: 600"
     return ""
 
 
