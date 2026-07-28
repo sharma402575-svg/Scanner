@@ -1,3 +1,4 @@
+import io
 import pandas as pd
 import streamlit as st
 
@@ -5,10 +6,11 @@ st.set_page_config(page_title="FII/DII Sentiment & Market Analyzer", layout="wid
 
 st.title("📊 F&O Participant OI & Market Sentiment Analyzer")
 st.write(
-    "Upload your participant-wise open interest CSV file and optionally input market metrics to evaluate the bias."
+    "Upload your participant-wise open interest CSV file and optionally input"
+    " market metrics to evaluate the bias."
 )
 
-# Sidebar or Main Input for Manual Metrics (Removes live_data dependency)
+# Sidebar for Manual Metrics (No external module dependencies)
 st.sidebar.header("Market Parameters")
 manual_vix = st.sidebar.number_input(
     "India VIX (Optional)", min_value=0.0, value=13.5, step=0.1
@@ -24,25 +26,22 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
   try:
-    # Read CSV safely
-    df = pd.read_csv(uploaded_file)
+    # Read file content safely as text string
+    stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8", errors="ignore"))
+    lines = stringio.readlines()
 
-    # Clean up and find the data rows
-    # Searching for rows containing participant labels like FII, CLIENT, etc.
-    raw_text_df = pd.read_csv(uploaded_file, header=None)
-
-    # Let's find where 'Client Type' or 'Client' or 'FII' is located
-    header_row_idx = None
-    for idx, row in raw_text_df.iterrows():
-      row_str = str(row.values).upper()
-      if "FII" in row_str or "CLIENT" in row_str:
-        header_row_idx = idx
+    # Find the line index where the actual table headers start
+    header_idx = 0
+    for idx, line in enumerate(lines):
+      if "Client Type" in line or (
+          "Client" in line and "Future Index Long" in line
+      ):
+        header_idx = idx
         break
 
-    if header_row_idx is not None:
-      df_clean = pd.read_csv(uploaded_file, skiprows=header_row_idx)
-    else:
-      df_clean = pd.read_csv(uploaded_file, skiprows=1)
+    # Recreate a clean CSV stream starting from the correct header line
+    clean_csv_data = "".join(lines[header_idx:])
+    df_clean = pd.read_csv(io.StringIO(clean_csv_data))
 
     # Standardize column names by stripping whitespace
     df_clean.columns = df_clean.columns.str.strip()
@@ -50,11 +49,7 @@ if uploaded_file is not None:
     st.subheader("📋 Raw Data Preview")
     st.dataframe(df_clean.head(10))
 
-    # Process Participant Data
-    # Look for columns resembling Client Type, Future Index Long, Future Index Short
     col_names = df_clean.columns.tolist()
-
-    # Attempting standard NSE mapping
     client_col = col_names[0]
     fut_idx_long_col = col_names[1]
     fut_idx_short_col = col_names[2]
@@ -65,10 +60,10 @@ if uploaded_file is not None:
     summary_data = []
     for _, row in df_clean.iterrows():
       c_type = str(row[client_col]).strip().upper()
-      if any(p in c_type for p in participants):
+      if any(p == c_type for p in participants):
         try:
-          l_val = float(row[fut_idx_long_col])
-          s_val = float(row[fut_idx_short_col])
+          l_val = float(str(row[fut_idx_long_col]).replace(",", ""))
+          s_val = float(str(row[fut_idx_short_col]).replace(",", ""))
           net_val = l_val - s_val
           summary_data.append({
               "Participant": c_type,
@@ -86,7 +81,7 @@ if uploaded_file is not None:
       st.dataframe(summary_df)
 
       # Sentiment Evaluation based on FII
-      fii_row = summary_df[summary_df["Participant"].str.contains("FII")]
+      fii_row = summary_df[summary_df["Participant"] == "FII"]
       if not fii_row.empty:
         fii_net = fii_row["Net Index Futures"].values[0]
 
@@ -111,7 +106,9 @@ if uploaded_file is not None:
               " support on intraday dips."
           )
       else:
-        st.warning("Could not isolate FII row automatically for summary metrics.")
+        st.warning("Could not isolate FII row automatically.")
+    else:
+      st.warning("No matching participant rows found in the CSV structure.")
 
   except Exception as e:
     st.error(f"Error processing the file: {e}")
