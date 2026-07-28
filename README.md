@@ -1,4 +1,4 @@
-[Uploading README.md…]()
+[README.md](https://github.com/user-attachments/files/30459490/README.md)
 # Sector Trade Scanner
 
 A single-page NSE (India) stock scanner. One click refreshes everything
@@ -71,55 +71,75 @@ its own URL, linked from the sidebar:
   click its own "Compute Sentiment" button. You can right-click its
   sidebar link and "open in new tab" for a true separate browser tab.
 
-## NSE Participant OI → Tomorrow's Sentiment (weekly log)
+## FII/DII & Sentiment page — Tomorrow's Call (one combined score)
 
-NSE publishes an official **"Participant wise Open Interest"** CSV free,
-daily, on nseindia.com — rows for Client, DII, FII, Pro, TOTAL, with
-Index/Stock Futures and Options Long/Short contract counts. Paste that
-CSV directly into this section and it:
+Everything on this page feeds into **one final "Tomorrow's Sentiment"
+reading** — it used to be two separate scores in two separate boxes; now
+it's unified into a 3-step flow:
 
-1. Reads the **FII** and **DII** rows specifically.
-2. Scores two things per participant: **Index Futures Long %** (straight
-   directional positioning) and **Index Options bias** (long calls + short
-   puts vs short calls + long puts — a standard bullish/bearish tell).
-3. Weights FII higher (1.5x) than DII (0.8x), since FII flows are the more
-   closely watched next-day driver.
-4. Gives one reading: **Bullish / Bearish / Neutral for tomorrow**, with
-   "Show logic" breaking down exactly how each number contributed.
-5. **Saves it to a rolling 7-day log** (this week) — a compact table of
-   date/sentiment/score, with each day expandable for full detail.
+**Step 1 — Market-wide inputs**: FII Cash Net, DII Cash Net, Nifty PCR,
+India VIX, Advance/Decline Ratio. VIX and PCR can be fetched live with one
+click (see below); any field can also be left blank.
 
-Same session-only caveat as the manual entry history above — this log
-resets if the browser tab closes or the app restarts. Ask if you want
+**Step 2 — FII/DII positioning**: upload NSE's official daily "Participant
+wise Open Interest" CSV (free, from nseindia.com) — read automatically.
+Adds FII/DII Index Futures Long % and Index Options bias (long calls +
+short puts vs short calls + long puts) into the same combined score.
+
+**Step 3 — Tomorrow's Sentiment**: one combined, weighted score across
+whatever was filled in from steps 1 and 2 — **Strongly Bullish / Bullish /
+Neutral / Bearish / Strongly Bearish for tomorrow** — with a "Show logic"
+breakdown listing exactly how every single number contributed. You can
+also compute from macro inputs alone (button below step 2) if you don't
+have the OI file yet.
+
+**Why this combination**: PCR and VIX reflect options-market fear/greed;
+FII/DII cash flow and OI positioning reflect where the big money is
+actually placed. Combined, they're the standard end-of-day read traders
+use to form a view for the next session — that's the whole point of this
+page, so they're scored together rather than separately.
+
+### Live India VIX & Nifty PCR
+
+Click **"🌐 Fetch Live India VIX & Nifty PCR"** and it auto-fills those two
+fields:
+- **India VIX** — via Yahoo Finance (`^INDIAVIX`), same reliable source as
+  the rest of the scanner.
+- **Nifty PCR** — via NSE's own public option-chain API. This isn't an
+  official documented API, so it can occasionally fail or get rate-limited
+  by NSE (especially from cloud-hosted IPs like Streamlit Cloud) — if it
+  does, the app tells you and you can just type the PCR in manually as a
+  fallback. Nothing else breaks if this fetch fails.
+
+### Uploading the Participant OI file
+
+Click "Upload NSE Participant OI CSV" and pick the `.csv` you downloaded
+from NSE — it's read and folded into the combined score automatically, no
+button click needed. A "paste instead" fallback is there if you don't
+have the file itself.
+
+### Weekly log
+
+Every time a reading is computed (from either the upload or the
+"macro inputs only" button), it's saved to a rolling log — a compact
+table of date/sentiment/score, capped at the last 7 entries (a week),
+with each day expandable for the full logic used that day.
+
+Same caveat applies: this log lives only in the current browser session
+— it resets if you close the tab or the app restarts. Ask if you want
 permanent day-to-day storage added (needs a small database).
 
-## FII/DII & Sentiment page (manual entry)
+### Stock-wise F&O data (separate, optional tool)
 
-FII/DII flows, PCR, VIX, market breadth, and stock-wise F&O open-interest
-data are **not available from free data sources** — Yahoo Finance doesn't
-carry them. This page lets you type in whatever numbers you have (any
-field can be left blank).
-
-**Market-wide inputs**: FII Cash Net, DII Cash Net, FII F&O Index Net,
-FII Long % in Index Futures, Nifty PCR, India VIX, Advance/Decline Ratio.
-Each is scored with published, standard interpretations (e.g. PCR > 1.3 =
-bullish tilt, VIX > 22 = high fear/bearish) and combined into one
-Bullish/Bearish/Neutral reading, with a "Show logic" expander giving a
-plain-English line for every number you entered.
-
-**Stock-wise F&O data** (optional, collapsed by default): paste
+Below the main score, a collapsed section lets you paste
 `TICKER, % price change, % OI change` per line, classified into:
 - Price↑ + OI↑ → **Long Buildup** (bullish — new longs entering)
 - Price↑ + OI↓ → **Short Covering** (bullish — shorts exiting)
 - Price↓ + OI↑ → **Short Buildup** (bearish — new shorts entering)
 - Price↓ + OI↓ → **Long Unwinding** (bearish — longs exiting)
 
-**History**: every time you click "Compute Sentiment", the reading is
-logged (collapsed by default, most recent first, capped at last 20).
-Click any entry to expand and see the inputs and logic used at that time.
-Note: this history lives only in your current browser session — it resets
-if you close the tab or the app restarts. It is not saved permanently
-(that would need a database, which isn't set up here).
+This is a per-stock lens, kept separate from (not added into) the overall
+Tomorrow's Sentiment score.
 
 ## Dates & times
 
@@ -140,6 +160,8 @@ regardless of what timezone the app happens to be hosted in.
 - `scanner.py` — `build_master_table()` computes every metric once;
   `view_*` functions filter/sort it; `overall_market_signal()` and
   `alerts_summary()` power the top banner.
+- `live_data.py` — live India VIX (Yahoo Finance) and Nifty PCR (NSE
+  option-chain API) fetchers, used by the sentiment page's fetch button.
 - `sentiment.py` — manual FII/DII/PCR/VIX/breadth scoring and F&O OI
   buildup classification, used by the sentiment page.
 - `app.py` — the Live Scanner page (Streamlit's "main" page — this is
