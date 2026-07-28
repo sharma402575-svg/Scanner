@@ -1,19 +1,27 @@
-[README.md](https://github.com/user-attachments/files/30440954/README.md)
+[README.md](https://github.com/user-attachments/files/30441425/README.md)
 # Sector Trade Scanner
 
-A stock scanner (NSE, India) with six views:
+A single-page NSE (India) stock scanner. One click refreshes everything
+from one consistent data snapshot, with an overall Buy/Sell market signal
+pinned at the very top.
 
-1. **Most Bullish / Bearish** — every stock across every sector, ranked by
-   R Factor, filtered to Bullish or Bearish tagged ones.
-2. **Momentum** — fastest-moving stocks (price rate-of-change + volume surge).
-3. **Gainers & Losers** — today's biggest % movers, side by side.
-4. **Sector Overview** — average R Factor per sector, plus an expandable
-   list of every individual stock in that sector with its own R Factor
-   and bias.
-5. **Volume Surge** — stocks trading at an unusual multiple of their
-   20-day average volume right now — an early tell for intraday breakouts
-   or news-driven moves.
-6. **Single Sector** — drill into one sector's stocks in full detail.
+## What's on the page (top to bottom)
+
+1. **Overall Market Signal** — a single Buy / Sell / Neutral call for the
+   whole scanned universe, with breadth stats (% of stocks buy-leaning vs
+   sell-leaning). This is the first thing you see.
+2. **Most bullish / bearish** — whole-market stocks ranked by R Factor.
+3. **Momentum** — fastest movers (rate-of-change + volume surge).
+4. **Gainers & losers** — today's biggest % movers.
+5. **Volume surge alerts** — unusual volume right now.
+6. **Day high / day low** — stocks trading at (or within 0.3% of) today's
+   high or low.
+7. **52-week high / low** — stocks within 3% of their 52-week high or low.
+8. **Sector overview** — average R Factor per sector, expandable to every
+   stock in that sector.
+
+Every section shows a **Trade Signal** (Strong Buy / Buy / Hold / Sell /
+Strong Sell) per stock.
 
 ## R Factor
 
@@ -21,31 +29,46 @@ A stock scanner (NSE, India) with six views:
 R Factor = stock's % return over the lookback window
            − sector index's % return over the same window
 ```
+Positive → stock beating its sector. Negative → lagging it.
 
-Positive → stock is beating its sector (bullish tilt).
-Negative → stock is lagging its sector (bearish tilt).
+## How Trade Signal is calculated
 
-Final Signal also checks the 20-day moving average to confirm the trend.
+A transparent points system, not a black box:
 
-## Extra columns for intraday / swing trading
+| Factor | Points |
+|---|---|
+| R Factor ≥ bullish threshold / ≤ bearish threshold | +2 / -2 |
+| Price above / below 20-day moving average | +1 / -1 |
+| RSI in healthy zone (40-65) / overbought (>75) or deeply oversold (<25) | +1 / -1 |
+| Momentum score positive / negative (with volume behind it) | +1 / -1 |
+| Near 52-week high / near 52-week low | +1 / -1 |
 
-- **RSI(14)** — momentum oscillator. Above 70 = overbought, below 30 =
-  oversold. Useful for timing entries/exits on both intraday and swing
-  trades.
-- **ATR(14)** — average true range, a volatility measure.
-- **Suggested Stop (long)** — LTP − 1.5×ATR, a simple volatility-based
-  stop-loss distance for long swing positions. (Adjust the multiplier to
-  taste — 1.5x is a common starting point, not a rule.)
-- **Volume Surge (x avg)** — today's volume divided by the 20-day average.
-  A quick way to see if a move is backed by real participation.
+Score ≥ 4 → **Strong Buy** · ≥ 2 → **Buy** · -1 to 1 → **Hold** ·
+≤ -2 → **Sell** · ≤ -4 → **Strong Sell**
+
+This combines common technical factors into one number so you can scan
+fast — it does **not** know about news, earnings, or fundamentals, and is
+not financial advice. Always confirm before trading.
+
+## Refresh & auto-refresh
+
+- **🔄 Refresh all data** — one fetch, every section recomputed from the
+  same snapshot.
+- **Auto-refresh toggle** (sidebar) — re-runs on a timer (1/2/5/10/15 min).
+  Turn off when not actively watching, to avoid unnecessary API calls.
+
+## Data freshness banner
+
+Shows the actual date of the latest bar Yahoo Finance has. An earlier
+date than today right after market close is normal sync delay, not a bug.
 
 ## Files
 
-- `sectors.py` — sector → stock list, sector → benchmark index. Edit to
-  add/remove stocks or sectors.
-- `scanner.py` — all scanning logic (R Factor, RSI, ATR, momentum, volume
-  surge, sector aggregation). No UI code — reusable elsewhere.
-- `app.py` — the Streamlit dashboard (6 tabs).
+- `sectors.py` — sector → stock list, sector → benchmark index.
+- `scanner.py` — `build_master_table()` computes every metric for every
+  stock once; all views (`view_*` functions) filter/sort that same table.
+  `overall_market_signal()` aggregates it into the top banner.
+- `app.py` — the single-page Streamlit dashboard.
 - `requirements.txt` — Python packages needed.
 
 ## Running it
@@ -55,33 +78,16 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Or deploy free via GitHub + Streamlit Community Cloud (no local install
-needed) — see the deployment guide provided separately.
+Or deploy free via GitHub + Streamlit Community Cloud.
 
-## About the "data as of" banner
+## Notes / limitations
 
-The app checks Yahoo Finance's most recent available bar every time it
-loads and shows a banner:
-- ✅ green = data matches today's date (as fresh as the free feed gets)
-- ⚠️ yellow = data is from an earlier date — this is normal right around
-  or after market close, since Yahoo can take a few hours to sync the
-  final end-of-day numbers. Any mismatch you see vs official NSE data
-  right after close is almost always this sync delay, not a calculation
-  error. Wait an hour or two and re-run the scan.
-
-## Notes
-
-- Data source: Yahoo Finance via `yfinance` — free but delayed (~15-20 min)
-  vs the live NSE feed. Good for swing/end-of-day scanning, not live
-  intraday execution or automated order placement.
-- Prices are now fetched **unadjusted** (raw close), which should match
-  official NSE closing prices much more closely than before. Small gaps can
-  still remain due to the ~15-20 min delay, occasional data-provider
-  discrepancies, or timing differences right around market open/close —
-  if you need tick-accurate live data, you'd need a paid data feed or a
-  broker API (Zerodha Kite Connect, Upstox API, etc.) instead of Yahoo
-  Finance.
-- Symbols are set up for NSE. Change `.NS` suffixes and `SECTOR_INDEX`
-  values in `sectors.py` for a different market.
-- This tool is informational, not financial advice — always confirm
-  signals with your own analysis before trading.
+- Data source: Yahoo Finance via `yfinance` — free but delayed (~15-20
+  min) vs live NSE, unadjusted prices to match official NSE closes.
+- 52-week high/low uses ~1 year of daily bars from Yahoo — a close
+  approximation of NSE's official 52-week figure, not guaranteed identical.
+- Not covered (would need paid data): options chain analytics, FII/DII
+  institutional flow data.
+- For tick-accurate live data or automated execution, you'd need a paid
+  feed or broker API (Zerodha Kite Connect, Upstox API, etc.).
+- Informational tool only — not financial advice.
