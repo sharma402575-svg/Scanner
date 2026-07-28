@@ -1,5 +1,13 @@
 """
-Sector Trade Scanner — single-page Streamlit dashboard
+Sector Trade Scanner — Home page (Live Scanner)
+
+This is a multi-page Streamlit app:
+  - app.py                                -> "Live Scanner" (this page)
+  - pages/1_FII_DII_and_Sentiment.py      -> "FII/DII & Sentiment" (separate page/URL)
+
+Streamlit shows both as links in the sidebar — each opens as its own page
+(you can right-click a sidebar link and "open in new tab" for a true
+separate browser tab).
 
 Run with:
     streamlit run app.py
@@ -14,7 +22,7 @@ from streamlit_autorefresh import st_autorefresh
 from sectors import SECTOR_STOCKS
 from scanner import run_full_scan_bundle
 
-st.set_page_config(page_title="Sector Trade Scanner", layout="wide")
+st.set_page_config(page_title="Sector Trade Scanner", layout="wide", page_icon="📊")
 
 with st.sidebar:
     st.header("Settings")
@@ -37,15 +45,38 @@ with st.sidebar:
         "breakdown (±1). Score ≥4 Strong Buy, ≥2 Buy, ≤-4 Strong Sell, ≤-2 "
         "Sell, else Hold. Rules-based heuristic — not financial advice."
     )
+    st.divider()
+    st.page_link("pages/1_FII_DII_and_Sentiment.py", label="🧾 FII/DII & Sentiment", icon="➡️")
 
 if auto_refresh:
     st_autorefresh(interval=interval_min * 60 * 1000, key="auto_refresh_timer")
 
-col_title, col_btn = st.columns([4, 1])
-with col_title:
-    st.title("📊 Sector Trade Scanner")
+st.title("📊 Sector Trade Scanner — Live Scanner")
+
+
+def style_row(val):
+    if val in ("Bullish", "Up", "Buy", "Strong Buy", "Strongly Bullish", True):
+        return "color: #16a34a; font-weight: 600"
+    if val in ("Bearish", "Down", "Sell", "Strong Sell", "Strongly Bearish"):
+        return "color: #dc2626; font-weight: 600"
+    return ""
+
+
+def show(df: pd.DataFrame, style_cols=("Trend Signal", "Trade Signal", "Sector Bias", "Direction", "Bias")):
+    if df is None or df.empty:
+        st.info("No matches right now.")
+        return
+    present = [c for c in style_cols if c in df.columns]
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    styler = df.style.format(precision=2, subset=numeric_cols) if numeric_cols else df.style
+    if present:
+        style_fn = getattr(styler, "map", None) or styler.applymap
+        styler = style_fn(style_row, subset=present)
+    st.dataframe(styler, use_container_width=True, hide_index=True)
+
+
+col_btn, _ = st.columns([1, 4])
 with col_btn:
-    st.write("")
     manual_refresh = st.button("🔄 Refresh all data", type="primary")
 
 should_run = manual_refresh or auto_refresh or "bundle" not in st.session_state
@@ -61,9 +92,6 @@ if not bundle:
     st.info("Click **Refresh all data** to load the scanner.")
     st.stop()
 
-
-# ---------- OVERALL MARKET SIGNAL + ALERTS FLASH — compact, side by side ----------
-
 overall = bundle["overall"]
 f = bundle["freshness"]
 alerts = bundle["alerts"]
@@ -72,7 +100,6 @@ signal_colors = {"Buy": ("#16a34a", "🟢"), "Sell": ("#dc2626", "🔴"), "Neutr
 color, dot = signal_colors.get(overall["label"], ("#6b7280", "⚪"))
 
 sig_col, alert_col = st.columns([1, 2])
-
 with sig_col:
     st.markdown(
         f"""
@@ -89,7 +116,6 @@ with sig_col:
         """,
         unsafe_allow_html=True,
     )
-
 with alert_col:
     if alerts:
         badges = ""
@@ -126,28 +152,6 @@ st.caption(
     "R Factor = stock's return minus its sector index's return. Trade Signal "
     "is a rules-based heuristic (see sidebar) — not financial advice."
 )
-
-
-def style_row(val):
-    if val in ("Bullish", "Up", "Buy", "Strong Buy", True):
-        return "color: #16a34a; font-weight: 600"
-    if val in ("Bearish", "Down", "Sell", "Strong Sell"):
-        return "color: #dc2626; font-weight: 600"
-    return ""
-
-
-def show(df: pd.DataFrame, style_cols=("Trend Signal", "Trade Signal", "Sector Bias", "Direction")):
-    if df is None or df.empty:
-        st.info("No matches right now.")
-        return
-    present = [c for c in style_cols if c in df.columns]
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    styler = df.style.format(precision=2, subset=numeric_cols) if numeric_cols else df.style
-    if present:
-        style_fn = getattr(styler, "map", None) or styler.applymap
-        styler = style_fn(style_row, subset=present)
-    st.dataframe(styler, use_container_width=True, hide_index=True)
-
 
 st.divider()
 st.header("🚀 Most bullish / bearish (whole market)")
