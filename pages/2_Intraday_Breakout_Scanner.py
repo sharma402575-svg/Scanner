@@ -2,13 +2,37 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-st.set_page_config(page_title="1-Min Breakout Momentum Scanner", layout="wide")
+# Optional component for autorefresh if available, otherwise using st_autorefresh or manual loop logic
+try:
+  from streamlit_autorefresh import st_autorefresh
+
+  has_autorefresh = True
+except ImportError:
+  has_autorefresh = False
+
+st.set_page_config(
+    page_title="1-Min Breakout Momentum Scanner (F&O)", layout="wide"
+)
 
 st.title("⚡ Comprehensive F&O 1-Minute Breakout Scanner")
 st.write(
-    "Scans liquid F&O stocks across the market, calculates momentum"
-    " aggressiveness, and sorts the fastest-moving stocks to the top."
+    "Scans liquid F&O stocks, sorts them by momentum aggression, and features"
+    " an auto-refresh toggle."
 )
+
+# Sidebar controls for Auto-Refresh and Manual Switch
+st.sidebar.header("Scanner Controls")
+auto_refresh_enabled = st.sidebar.toggle(
+    "Enable 1-Min Auto-Refresh", value=False
+)
+
+# If auto-refresh is toggled ON, refresh every 60,000 ms (1 minute)
+if auto_refresh_enabled and has_autorefresh:
+  st_autorefresh(interval=60000, key="datarefresh")
+elif auto_refresh_enabled and not has_autorefresh:
+  st.sidebar.warning(
+      "To use auto-refresh, install package: pip install streamlit-autorefresh"
+  )
 
 # Comprehensive list of liquid NSE F&O stocks
 fo_stocks = [
@@ -53,12 +77,14 @@ def color_coding(val):
   return "color: #94a3b8;"
 
 
-if st.button("Run Full F&O Momentum Scan"):
+# Run scan automatically if auto-refresh is on, or via button click if off
+run_scan = st.button("Run Full F&O Momentum Scan") or auto_refresh_enabled
+
+if run_scan:
   with st.spinner(
       "Scanning all F&O stocks and calculating momentum aggression..."
   ):
     try:
-      # Batch download intraday 1-minute data
       data = yf.download(
           fo_stocks,
           period="1d",
@@ -70,7 +96,6 @@ if st.button("Run Full F&O Momentum Scan"):
       results = []
       for stock in fo_stocks:
         try:
-          # Handle multi-index structure from batch download
           df = data[stock].dropna()
           if len(df) < 2:
             continue
@@ -80,7 +105,6 @@ if st.button("Run Full F&O Momentum Scan"):
           c_close = df.iloc[-1]["Close"]
           c_time = df.index[-1].strftime("%H:%M:%S")
 
-          # Calculate momentum aggression score (% distance from breakout level)
           if c_close > f_high:
             status = "🚀 Bullish Breakout"
             aggression_score = ((c_close - f_high) / f_high) * 100
@@ -106,17 +130,19 @@ if st.button("Run Full F&O Momentum Scan"):
       if results:
         res_df = pd.DataFrame(results)
 
-        # Sort by highest aggression score so most active momentum stocks appear first
+        # Sort by aggression score descending
         res_df = res_df.sort_values(
             by="Aggression Score (%)", ascending=False
         ).reset_index(drop=True)
+
+        # Make index start from 1 instead of 0
+        res_df.index = res_df.index + 1
 
         st.success(
             f"Successfully scanned {len(results)} F&O stocks! Sorted by highest"
             " aggression first."
         )
 
-        # Apply color coding to the status column
         styled_df = res_df.style.map(
             color_coding, subset=["Status"]
         ).format({
@@ -137,6 +163,6 @@ if st.button("Run Full F&O Momentum Scan"):
       st.error(f"Error executing scan: {e}")
 else:
   st.info(
-      "Click the button above to execute the live scan across all listed F&O"
-      " stocks."
+      "Click the button above or turn on **Enable 1-Min Auto-Refresh** in the"
+      " sidebar."
   )
