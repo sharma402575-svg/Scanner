@@ -271,51 +271,47 @@ def _get(row: dict, *keys):
     return None
 
 
-def compute_participant_sentiment(fii_row: dict, dii_row: dict):
-    """
-    Turns FII + DII rows from the NSE participant-OI report into a
-    tomorrow-facing sentiment reading. Two angles per participant:
-      1. Index Futures Long % — straightforward directional positioning.
-      2. Index Options bias — (Call Long + Put Short) vs (Call Short + Put
-         Long): net long calls / short puts = bullish tilt; net short
-         calls / long puts = bearish tilt.
-    FII is weighted higher (1.5x) than DII (0.8x) since FII flows are the
-    more closely watched driver of next-day index direction.
-    """
-    breakdown = []
+def _participant_factor_items(row: dict, label: str, weight: float):
+    """Index Futures Long % and Index Options bias for one participant
+    (FII or DII), as a list of breakdown items. Shared by the
+    participant-only scorer and the combined tomorrow-sentiment scorer."""
+    items = []
+    if not row:
+        return items
 
-    def participant_scores(row, label, weight):
-        if not row:
-            return
-        fut_long = _get(row, "Future Index Long")
-        fut_short = _get(row, "Future Index Short")
-        if fut_long is not None and fut_short is not None and (fut_long + fut_short) > 0:
-            pct = fut_long / (fut_long + fut_short) * 100
-            item = _long_pct_factor(pct, name=f"{label} Index Futures Long %")
+    fut_long = _get(row, "Future Index Long")
+    fut_short = _get(row, "Future Index Short")
+    if fut_long is not None and fut_short is not None and (fut_long + fut_short) > 0:
+        pct = fut_long / (fut_long + fut_short) * 100
+        item = _long_pct_factor(pct, name=f"{label} Index Futures Long %")
+        if item:
+            item["points"] = round(item["points"] * weight, 2)
+            item["message"] += f" (weighted x{weight})"
+            items.append(item)
+
+    call_long = _get(row, "Option Index Call Long")
+    call_short = _get(row, "Option Index Call Short")
+    put_long = _get(row, "Option Index Put Long")
+    put_short = _get(row, "Option Index Put Short")
+    if None not in (call_long, call_short, put_long, put_short):
+        bullish_leg = call_long + put_short
+        bearish_leg = call_short + put_long
+        total = bullish_leg + bearish_leg
+        if total > 0:
+            pct = bullish_leg / total * 100
+            item = _long_pct_factor(pct, name=f"{label} Index Options Bullish %")
             if item:
                 item["points"] = round(item["points"] * weight, 2)
-                item["message"] += f" (weighted x{weight})"
-                breakdown.append(item)
+                item["message"] += (f" (weighted x{weight}). Basis: long calls + short puts "
+                                     f"= {bullish_leg:,.0f} vs short calls + long puts = {bearish_leg:,.0f}.")
+                items.append(item)
+    return items
 
-        call_long = _get(row, "Option Index Call Long")
-        call_short = _get(row, "Option Index Call Short")
-        put_long = _get(row, "Option Index Put Long")
-        put_short = _get(row, "Option Index Put Short")
-        if None not in (call_long, call_short, put_long, put_short):
-            bullish_leg = call_long + put_short
-            bearish_leg = call_short + put_long
-            total = bullish_leg + bearish_leg
-            if total > 0:
-                pct = bullish_leg / total * 100
-                item = _long_pct_factor(pct, name=f"{label} Index Options Bullish %")
-                if item:
-                    item["points"] = round(item["points"] * weight, 2)
-                    item["message"] += (f" (weighted x{weight}). Basis: long calls + short puts "
-                                         f"= {bullish_leg:,.0f} vs short calls + long puts = {bearish_leg:,.0f}.")
-                    breakdown.append(item)
 
-    participant_scores(fii_row, "FII", weight=1.5)
-    participant_scores(dii_row, "DII", weight=0.8)
+def compute_participant_sentiment(fii_row: dict, dii_row: dict):
+    """Participant-OI-only sentiment (used when no macro data is filled in)."""
+    breakdown = _participant_factor_items(fii_row, "FII", weight=1.5)
+    breakdown += _participant_factor_items(dii_row, "DII", weight=0.8)
 
     if not breakdown:
         return {"score": 0, "label": "No data", "color": "#6b7280", "breakdown": [],
@@ -330,6 +326,51 @@ def compute_participant_sentiment(fii_row: dict, dii_row: dict):
         label, color = "Neutral for tomorrow", "#6b7280"
 
     summary = f"Combined weighted score = {total} from {len(breakdown)} factor(s). Reading: {label}."
+    return {"score": total, "label": label, "color": color, "breakdown": breakdown, "summary": summary}
+
+
+def compute_tomorrow_sentiment(fii_cash=None, dii_cash=None, pcr=None, vix=None,
+                                ad_ratio=None, fii_row=None, dii_row=None):
+    """
+    THE combined end-of-day call for tomorrow: merges macro factors (PCR,
+    VIX, FII/DII cash flow, market breadth — whatever's filled in above)
+    with FII/DII Index Futures + Options positioning from the uploaded
+    Participant OI file (whatever's available). This is what "Tomorrow's
+    Sentiment" in the weekly log is built from — one number, not two.
+    """
+    breakdown = []
+    for item in [
+        _flow_factor("FII Cash Net", fii_cash, weight=1.5),
+        _flow_factor("DII Cash Net", dii_cash, weight=1.0),
+        _pcr_factor(pcr),
+        _vix_factor(vix),
+        _breadth_factor(ad_ratio),
+    ]:
+        if item:
+            breakdown.append(item)
+
+    breakdown += _participant_factor_items(fii_row, "FII", weight=1.5)
+    breakdown += _participant_factor_items(dii_row, "DII", weight=0.8)
+
+    if not breakdown:
+        return {"score": 0, "label": "No data", "color": "#6b7280", "breakdown": [],
+                "summary": "No inputs yet — fill in the fields above and/or upload the Participant OI file."}
+
+    total = round(sum(b["points"] for b in breakdown), 2)
+    if total >= 7:
+        label, color = "Strongly Bullish for tomorrow", "#16a34a"
+    elif total >= 3:
+        label, color = "Bullish for tomorrow", "#16a34a"
+    elif total <= -7:
+        label, color = "Strongly Bearish for tomorrow", "#b91c1c"
+    elif total <= -3:
+        label, color = "Bearish for tomorrow", "#b91c1c"
+    else:
+        label, color = "Neutral for tomorrow", "#6b7280"
+
+    n = len(breakdown)
+    summary = (f"{n} factor{'s' if n != 1 else ''} combined, weighted score = {total}. "
+               f"Reading: {label}.")
     return {"score": total, "label": label, "color": color, "breakdown": breakdown, "summary": summary}
 
 
