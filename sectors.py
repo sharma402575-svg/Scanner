@@ -3,8 +3,8 @@ Sector -> constituent stock mapping for NSE (yfinance tickers use .NS suffix).
 Each sector also maps to a benchmark sector index (Yahoo Finance ticker) used
 to compute the R Factor (relative strength vs sector).
 
-Edit/expand these lists freely — this is a starter set of liquid, well-known
-names per sector so the scanner works out of the box.
+BANK list matches the 12 constituents of the Nifty Bank index.
+Other sectors are a curated liquid subset — expand freely.
 """
 
 SECTOR_INDEX = {
@@ -22,7 +22,7 @@ SECTOR_STOCKS = {
     "BANK": [
         "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS",
         "AXISBANK.NS", "INDUSINDBK.NS", "BANKBARODA.NS", "PNB.NS",
-        "IDFCFIRSTB.NS", "FEDERALBNK.NS",
+        "IDFCFIRSTB.NS", "FEDERALBNK.NS", "AUBANK.NS", "CANBK.NS",
     ],
     "IT": [
         "TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS",
