@@ -84,19 +84,19 @@ def _vix_factor(vix: Optional[float]):
     return {"factor": "India VIX", "value": vix, "points": pts, "message": msg}
 
 
-def _long_pct_factor(long_pct: Optional[float]):
+def _long_pct_factor(long_pct: Optional[float], name: str = "FII Long % (Index Fut)"):
     if long_pct is None:
         return None
     if long_pct > 60:
-        pts, tone = 2, "majority long — FII positioning is bullish"
+        pts, tone = 2, "majority long — bullish positioning"
     elif long_pct > 50:
         pts, tone = 1, "slightly more long than short — mildly bullish"
     elif long_pct > 40:
         pts, tone = -1, "slightly more short than long — mildly bearish"
     else:
-        pts, tone = -2, "majority short — FII positioning is bearish"
-    msg = f"FII Long % in Index Futures = {long_pct:.1f}% ({tone}) → {'+' if pts>=0 else ''}{pts} pts."
-    return {"factor": "FII Long % (Index Fut)", "value": long_pct, "points": pts, "message": msg}
+        pts, tone = -2, "majority short — bearish positioning"
+    msg = f"{name} = {long_pct:.1f}% ({tone}) → {'+' if pts>=0 else ''}{pts} pts."
+    return {"factor": name, "value": long_pct, "points": pts, "message": msg}
 
 
 def _breadth_factor(ad_ratio: Optional[float]):
@@ -215,3 +215,307 @@ def parse_fno_text(text: str):
             continue
         rows.append(classify_fno_row(ticker, price_chg, oi_chg))
     return rows, skipped
+
+
+# ---------- NSE "Participant wise Open Interest" report parser ----------
+# NSE publishes this CSV daily, free, on their website. Columns are fixed:
+# Client Type, Future Index Long, Future Index Short, Future Stock Long,
+# Future Stock Short, Option Index Call Long, Option Index Put Long,
+# Option Index Call Short, Option Index Put Short, Option Stock Call Long,
+# Option Stock Put Long, Option Stock Call Short, Option Stock Put Short,
+# Total Long Contracts, Total Short Contracts
+
+def parse_participant_csv(text: str):
+    """
+    Parses NSE's participant-wise OI CSV (as pasted by the user) into
+    {CLIENT_TYPE: {column_name: value}}. Skips the title row automatically
+    (first row if it doesn't look like a header). Returns None if it can't
+    find a usable header + FII/DII rows.
+    """
+    lines = [l for l in (text or "").splitlines() if l.strip()]
+    if len(lines) < 3:
+        return None
+
+    header_idx = None
+    for i, line in enumerate(lines[:3]):
+        if "client type" in line.lower():
+            header_idx = i
+            break
+    if header_idx is None:
+        return None
+
+    headers = [h.strip() for h in lines[header_idx].split(",")]
+    rows = {}
+    for line in lines[header_idx + 1:]:
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            continue
+        client_type = parts[0].strip().upper()
+        row = {}
+        for h, v in zip(headers[1:], parts[1:]):
+            try:
+                row[h] = float(v.replace(",", ""))
+            except ValueError:
+                row[h] = None
+        rows[client_type] = row
+    return rows if rows else None
+
+
+def _get(row: dict, *keys):
+    """Fetch the first matching key from a parsed CSV row, case/spacing tolerant."""
+    lookup = {k.lower().replace(" ", ""): v for k, v in row.items()}
+    for k in keys:
+        v = lookup.get(k.lower().replace(" ", ""))
+        if v is not None:
+            return v
+    return None
+
+
+def compute_participant_sentiment(fii_row: dict, dii_row: dict):
+    """
+    Turns FII + DII rows from the NSE participant-OI report into a
+    tomorrow-facing sentiment reading. Two angles per participant:
+      1. Index Futures Long % — straightforward directional positioning.
+      2. Index Options bias — (Call Long + Put Short) vs (Call Short + Put
+         Long): net long calls / short puts = bullish tilt; net short
+         calls / long puts = bearish tilt.
+    FII is weighted higher (1.5x) than DII (0.8x) since FII flows are the
+    more closely watched driver of next-day index direction.
+    """
+    breakdown = []
+
+    def participant_scores(row, label, weight):
+        if not row:
+            return
+        fut_long = _get(row, "Future Index Long")
+        fut_short = _get(row, "Future Index Short")
+        if fut_long is not None and fut_short is not None and (fut_long + fut_short) > 0:
+            pct = fut_long / (fut_long + fut_short) * 100
+            item = _long_pct_factor(pct, name=f"{label} Index Futures Long %")
+            if item:
+                item["points"] = round(item["points"] * weight, 2)
+                item["message"] += f" (weighted x{weight})"
+                breakdown.append(item)
+
+        call_long = _get(row, "Option Index Call Long")
+        call_short = _get(row, "Option Index Call Short")
+        put_long = _get(row, "Option Index Put Long")
+        put_short = _get(row, "Option Index Put Short")
+        if None not in (call_long, call_short, put_long, put_short):
+            bullish_leg = call_long + put_short
+            bearish_leg = call_short + put_long
+            total = bullish_leg + bearish_leg
+            if total > 0:
+                pct = bullish_leg / total * 100
+                item = _long_pct_factor(pct, name=f"{label} Index Options Bullish %")
+                if item:
+                    item["points"] = round(item["points"] * weight, 2)
+                    item["message"] += (f" (weighted x{weight}). Basis: long calls + short puts "
+                                         f"= {bullish_leg:,.0f} vs short calls + long puts = {bearish_leg:,.0f}.")
+                    breakdown.append(item)
+
+    participant_scores(fii_row, "FII", weight=1.5)
+    participant_scores(dii_row, "DII", weight=0.8)
+
+    if not breakdown:
+        return {"score": 0, "label": "No data", "color": "#6b7280", "breakdown": [],
+                "summary": "Couldn't find usable FII/DII Index Futures or Options columns in the pasted data."}
+
+    total = round(sum(b["points"] for b in breakdown), 2)
+    if total >= 4:
+        label, color = "Bullish for tomorrow", "#16a34a"
+    elif total <= -4:
+        label, color = "Bearish for tomorrow", "#b91c1c"
+    else:
+        label, color = "Neutral for tomorrow", "#6b7280"
+
+    summary = f"Combined weighted score = {total} from {len(breakdown)} factor(s). Reading: {label}."
+    return {"score": total, "label": label, "color": color, "breakdown": breakdown, "summary": summary}
+
+
+# ---------- NSE Participant-wise Open Interest (Client / DII / FII / Pro) ----------
+# Standard 14-column layout of NSE's daily F&O participant OI report:
+#   Future Index Long, Future Index Short, Future Stock Long, Future Stock Short,
+#   Option Index Call Long, Option Index Call Short, Option Index Put Long,
+#   Option Index Put Short, Option Stock Call Long, Option Stock Call Short,
+#   Option Stock Put Long, Option Stock Put Short, Total Long, Total Short
+
+OI_COLUMNS = [
+    "future_index_long", "future_index_short", "future_stock_long", "future_stock_short",
+    "option_index_call_long", "option_index_call_short", "option_index_put_long", "option_index_put_short",
+    "option_stock_call_long", "option_stock_call_short", "option_stock_put_long", "option_stock_put_short",
+    "total_long", "total_short",
+]
+
+
+def parse_participant_oi_text(text: str):
+    """
+    Parses NSE's participant-wise OI table. One row per line:
+      ParticipantName, val1, val2, ... val14   (comma or whitespace separated)
+    Commas used as thousands separators inside numbers are stripped first.
+    Returns ({participant_name: {column: value, ...}}, skipped_line_count).
+    """
+    participants = {}
+    skipped = 0
+    for line in (text or "").splitlines():
+        raw_line = line.strip()
+        if not raw_line:
+            continue
+        # protect thousands-separator commas inside numbers, then split on the
+        # remaining structural commas (name vs numbers) — simplest robust way:
+        # try comma split first (typical CSV paste), else whitespace split.
+        parts = [p.strip() for p in raw_line.split(",") if p.strip() != ""]
+        if len(parts) < 15:
+            parts = raw_line.split()
+        if len(parts) < 15:
+            skipped += 1
+            continue
+        name = parts[0]
+        nums = []
+        ok = True
+        for tok in parts[1:15]:
+            tok_clean = tok.replace(",", "").replace("₹", "").strip()
+            try:
+                nums.append(float(tok_clean))
+            except ValueError:
+                ok = False
+                break
+        if not ok:
+            skipped += 1
+            continue
+        participants[name.strip().upper()] = dict(zip(OI_COLUMNS, nums))
+    return participants, skipped
+
+
+def _net_pct(long_val, short_val):
+    total = long_val + short_val
+    if total <= 0:
+        return None
+    return (long_val - short_val) / total * 100
+
+
+def _futures_factor(participant: str, d: dict, weight: float):
+    pct = _net_pct(d["future_index_long"], d["future_index_short"])
+    if pct is None:
+        return None
+    if pct > 15:
+        pts, tone = 2, "strongly net long"
+    elif pct > 5:
+        pts, tone = 1, "net long"
+    elif pct < -15:
+        pts, tone = -2, "strongly net short"
+    elif pct < -5:
+        pts, tone = -1, "net short"
+    else:
+        pts, tone = 0, "roughly balanced"
+    pts = round(pts * weight, 1)
+    msg = (f"{participant} Index Futures: Long {d['future_index_long']:,.0f} vs "
+           f"Short {d['future_index_short']:,.0f} ({pct:+.1f}% net, {tone}) → "
+           f"{'+' if pts>=0 else ''}{pts} pts. {participant} being net long index futures "
+           f"is a bullish signal for the next session; net short is bearish.")
+    return {"factor": f"{participant} Index Futures", "points": pts, "message": msg}
+
+
+def _options_factor(participant: str, d: dict, weight: float):
+    call_long, call_short = d["option_index_call_long"], d["option_index_call_short"]
+    put_long, put_short = d["option_index_put_long"], d["option_index_put_short"]
+    total = call_long + call_short + put_long + put_short
+    if total <= 0:
+        return None
+    call_net = call_long - call_short   # net long calls = bullish stance
+    put_net = put_long - put_short      # net long puts = bearish stance (buying downside protection)
+    combined = call_net - put_net
+    pct = combined / total * 100
+    if pct > 15:
+        pts, tone = 2, "net positioning skewed bullish (long calls / short puts)"
+    elif pct > 5:
+        pts, tone = 1, "mildly bullish options positioning"
+    elif pct < -15:
+        pts, tone = -2, "net positioning skewed bearish (long puts / short calls)"
+    elif pct < -5:
+        pts, tone = -1, "mildly bearish options positioning"
+    else:
+        pts, tone = 0, "balanced options positioning"
+    pts = round(pts * weight, 1)
+    msg = (f"{participant} Index Options: net call bias {call_net:+,.0f}, net put bias "
+           f"{put_net:+,.0f} ({pct:+.1f}% combined, {tone}) → {'+' if pts>=0 else ''}{pts} pts. "
+           f"Long calls / short puts = betting on upside; long puts / short calls = hedging or "
+           f"betting on downside.")
+    return {"factor": f"{participant} Index Options", "points": pts, "message": msg}
+
+
+def _stock_derivatives_factor(participant: str, d: dict, weight: float):
+    fut_net = d["future_stock_long"] - d["future_stock_short"]
+    opt_net = ((d["option_stock_call_long"] - d["option_stock_call_short"])
+               - (d["option_stock_put_long"] - d["option_stock_put_short"]))
+    total = (d["future_stock_long"] + d["future_stock_short"]
+             + d["option_stock_call_long"] + d["option_stock_call_short"]
+             + d["option_stock_put_long"] + d["option_stock_put_short"])
+    if total <= 0:
+        return None
+    combined = fut_net + opt_net
+    pct = combined / total * 100
+    if pct > 15:
+        pts, tone = 1, "net bullish in single-stock derivatives"
+    elif pct < -15:
+        pts, tone = -1, "net bearish in single-stock derivatives"
+    else:
+        pts, tone = 0, "balanced"
+    pts = round(pts * weight, 1)
+    msg = (f"{participant} Stock F&O: combined net {combined:+,.0f} ({pct:+.1f}%, {tone}) → "
+           f"{'+' if pts>=0 else ''}{pts} pts.")
+    return {"factor": f"{participant} Stock F&O", "points": pts, "message": msg}
+
+
+def compute_participant_sentiment(participants: dict):
+    """
+    Builds next-session sentiment from NSE's participant-wise OI report.
+    FII is weighted highest (biggest, most-watched mover), DII second,
+    Pro (prop desks) third. Client (retail) is shown for reference only —
+    often read as a contrarian indicator, so it is NOT scored into the
+    total (deliberately, to avoid double-counting the same market against
+    itself); it is still returned in the breakdown as context.
+    """
+    breakdown = []
+    weights = {"FII": 1.5, "DII": 1.0, "PRO": 0.5}
+    for participant, weight in weights.items():
+        d = participants.get(participant)
+        if not d:
+            continue
+        for factor_fn in (_futures_factor, _options_factor, _stock_derivatives_factor):
+            item = factor_fn(participant, d, weight)
+            if item:
+                breakdown.append(item)
+
+    # Client (retail) shown as context only — not scored
+    client = participants.get("CLIENT")
+    context_msg = None
+    if client:
+        pct = _net_pct(client["future_index_long"], client["future_index_short"])
+        if pct is not None:
+            context_msg = (f"Client (retail) Index Futures net = {pct:+.1f}% "
+                            f"— shown for context only, not scored (retail positioning is "
+                            f"often read as a contrarian indicator, so including it in the "
+                            f"main score would effectively count the market against itself).")
+
+    if not breakdown:
+        return {"score": 0, "label": "No data", "color": "#6b7280", "breakdown": [],
+                "context": context_msg, "summary": "No usable FII/DII/Pro rows found."}
+
+    total = round(sum(b["points"] for b in breakdown), 1)
+    if total >= 5:
+        label, color = "Strongly Bullish", "#16a34a"
+    elif total >= 2:
+        label, color = "Bullish", "#16a34a"
+    elif total <= -5:
+        label, color = "Strongly Bearish", "#b91c1c"
+    elif total <= -2:
+        label, color = "Bearish", "#b91c1c"
+    else:
+        label, color = "Neutral", "#6b7280"
+
+    summary = (f"Combined FII/DII/Pro positioning score = {total}. "
+               f"Next-session reading: {label}.")
+
+    return {"score": total, "label": label, "color": color, "breakdown": breakdown,
+            "context": context_msg, "summary": summary}
