@@ -2,10 +2,8 @@
 Core scanning engine.
 
 Everything is built from ONE master table (build_master_table) computed
-from a single data fetch per refresh. Every section on the page (bullish/
-bearish, momentum, gainers/losers, volume surge, day high/low, 52-week
-high/low, sector overview) is just a filter/sort of that same table, so
-numbers never drift apart between sections.
+from a single data fetch per refresh. Every section on the page is a
+filter/sort of that same table, so numbers never drift apart.
 
 --- R Factor ---
 R Factor = stock's % return over `lookback` periods
@@ -13,30 +11,39 @@ R Factor = stock's % return over `lookback` periods
   > 0  -> stock outperforming its sector (bullish tilt)
   < 0  -> stock underperforming its sector (bearish tilt)
 
+--- Range Breakout / Breakdown ---
+Breakout = today's close is ABOVE the highest close of the prior
+           `breakout_period` days (excluding today)
+Breakdown = today's close is BELOW the lowest close of the prior
+            `breakout_period` days (excluding today)
+A simple, standard definition of a price breaking out of its recent
+trading range.
+
 --- Trade Signal (composite) ---
-A simple, transparent points system — NOT a black box:
+A transparent points system, not a black box:
   +2 / -2   R Factor strongly above/below your threshold (sector strength)
   +1 / -1   Price above/below its 20-day moving average (trend)
-  +1 / -1   RSI healthy (40-65) vs overbought (>75) — momentum without excess
+  +1 / -1   RSI healthy (40-65) vs overbought (>75) or deeply oversold (<25)
   +1 / -1   Momentum score positive/negative with real volume behind it
-  +1 / -1   Near 52-week high/low (trend continuation either direction)
+  +1 / -1   Near 52-week high/low (trend continuation)
+  +1 / -1   Range breakout / breakdown
 
-Score >= 4   -> Strong Buy
-Score 2-3    -> Buy
+Score >= 4   -> Strong Buy   | Score 2-3    -> Buy
 Score -1..1  -> Hold
-Score -3..-2 -> Sell
-Score <= -4  -> Strong Sell
+Score -3..-2 -> Sell         | Score <= -4  -> Strong Sell
 
-This is a rules-based heuristic combining common technical factors — it is
-NOT financial advice and does not know about news, fundamentals, or
-events. Always confirm with your own judgement before trading.
+Rules-based heuristic combining common technical factors — NOT financial
+advice, and has no knowledge of news, fundamentals, or events.
 """
 
 import datetime
+from zoneinfo import ZoneInfo
 import pandas as pd
 import numpy as np
 import yfinance as yf
 from sectors import SECTOR_STOCKS, SECTOR_INDEX
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 # ---------- low-level helpers ----------
@@ -94,16 +101,15 @@ def _col(data, ticker, field):
         return pd.Series(dtype=float)
 
 
-def last_data_date(raw) -> str:
-    try:
-        return str(raw.index[-1].date())
-    except Exception:
-        return "unknown"
-
-
 def data_freshness_from_raw(raw):
-    date_str = last_data_date(raw)
-    today_str = str(datetime.date.today())
+    """Dates in dd-mm-yyyy; 'today' and fetch time both reported in IST
+    (Indian market time), regardless of what timezone the server runs in."""
+    try:
+        date_str = raw.index[-1].date().strftime("%d-%m-%Y")
+    except Exception:
+        date_str = "unknown"
+    now_ist = datetime.datetime.now(IST)
+    today_str = now_ist.strftime("%d-%m-%Y")
     return {"last_data_date": date_str, "today": today_str, "is_stale": date_str != today_str}
 
 
@@ -113,7 +119,7 @@ def _fetch_full_market():
 
 
 def _trade_signal(r_factor, above20, rsi, momentum_score, near_high, near_low,
-                   rs_bull_threshold, rs_bear_threshold):
+                   breakout, breakdown, rs_bull_threshold, rs_bear_threshold):
     score = 0
     if r_factor is not None and not np.isnan(r_factor):
         if r_factor >= rs_bull_threshold:
@@ -140,6 +146,10 @@ def _trade_signal(r_factor, above20, rsi, momentum_score, near_high, near_low,
         score += 1
     if near_low:
         score -= 1
+    if breakout:
+        score += 1
+    if breakdown:
+        score -= 1
 
     if score >= 4:
         label = "Strong Buy"
@@ -157,7 +167,7 @@ def _trade_signal(r_factor, above20, rsi, momentum_score, near_high, near_low,
 # ---------- master table ----------
 
 def build_master_table(lookback: int = 20, rs_bull_threshold: float = 2.0,
-                        rs_bear_threshold: float = -2.0, raw=None):
+                        rs_bear_threshold: float = -2.0, breakout_period: int = 20, raw=None):
     if raw is None:
         raw = _fetch_full_market()
 
@@ -209,6 +219,16 @@ def build_master_table(lookback: int = 20, rs_bull_threshold: float = 2.0,
         at_day_high = bool(day_high and (day_high - ltp) / day_high <= 0.003)
         at_day_low = bool(day_low and (ltp - day_low) / day_low <= 0.003)
 
+        # Range breakout / breakdown vs prior N-day close range (excluding today)
+        breakout = breakdown = False
+        range_high = range_low = None
+        if len(close) > breakout_period:
+            prior = close.iloc[-(breakout_period + 1):-1]
+            range_high = float(prior.max())
+            range_low = float(prior.min())
+            breakout = bool(ltp > range_high)
+            breakdown = bool(ltp < range_low)
+
         if r_factor is not None and not np.isnan(r_factor):
             if r_factor >= rs_bull_threshold and above20:
                 trend_signal = "Bullish"
@@ -221,7 +241,7 @@ def build_master_table(lookback: int = 20, rs_bull_threshold: float = 2.0,
 
         score, trade_signal = _trade_signal(
             r_factor, above20, rsi, momentum_score, near_52w_high, near_52w_low,
-            rs_bull_threshold, rs_bear_threshold,
+            breakout, breakdown, rs_bull_threshold, rs_bear_threshold,
         )
 
         rows.append({
@@ -232,7 +252,7 @@ def build_master_table(lookback: int = 20, rs_bull_threshold: float = 2.0,
             f"%Chg ({lookback}d)": round(stock_return, 2) if not np.isnan(stock_return) else None,
             "R Factor": round(r_factor, 2) if r_factor is not None and not np.isnan(r_factor) else None,
             "Trend Signal": trend_signal,
-            "RSI(14)": round(rsi, 1) if not np.isnan(rsi) else None,
+            "RSI(14)": round(rsi, 2) if not np.isnan(rsi) else None,
             "ATR(14)": round(atr, 2) if not np.isnan(atr) else None,
             "Suggested Stop (long)": stop_long,
             "Vol Surge (x avg)": round(vol_surge, 2) if not np.isnan(vol_surge) else None,
@@ -245,6 +265,10 @@ def build_master_table(lookback: int = 20, rs_bull_threshold: float = 2.0,
             "Near 52w Low": near_52w_low,
             "At Day High": at_day_high,
             "At Day Low": at_day_low,
+            f"Range High ({breakout_period}d)": round(range_high, 2) if range_high else None,
+            f"Range Low ({breakout_period}d)": round(range_low, 2) if range_low else None,
+            "Breakout": breakout,
+            "Breakdown": breakdown,
             "Score": score,
             "Trade Signal": trade_signal,
         })
@@ -256,16 +280,17 @@ def build_master_table(lookback: int = 20, rs_bull_threshold: float = 2.0,
 # ---------- views derived from the master table ----------
 
 def view_most_bullish(df, n=15):
-    return df[df["Trend Signal"] == "Bullish"].sort_values("R Factor", ascending=False).head(n).reset_index(drop=True)
+    cols = ["Ticker", "Sector", "LTP", "% Chg (1d)", "R Factor", "Trend Signal", "Trade Signal"]
+    return df[df["Trend Signal"] == "Bullish"].sort_values("R Factor", ascending=False).head(n)[cols].reset_index(drop=True)
 
 
 def view_most_bearish(df, n=15):
-    return df[df["Trend Signal"] == "Bearish"].sort_values("R Factor", ascending=True).head(n).reset_index(drop=True)
+    cols = ["Ticker", "Sector", "LTP", "% Chg (1d)", "R Factor", "Trend Signal", "Trade Signal"]
+    return df[df["Trend Signal"] == "Bearish"].sort_values("R Factor", ascending=True).head(n)[cols].reset_index(drop=True)
 
 
 def view_momentum(df, n=15):
-    cols = ["Ticker", "Sector", "LTP", "% Chg (1d)", "Momentum Score",
-            "Vol Surge (x avg)", "Trade Signal"]
+    cols = ["Ticker", "Sector", "LTP", "% Chg (1d)", "Momentum Score", "Vol Surge (x avg)", "Trade Signal"]
     return df.sort_values("Momentum Score", ascending=False).head(n)[cols].reset_index(drop=True)
 
 
@@ -290,11 +315,20 @@ def view_day_high_low(df, n=20):
 
 
 def view_52w_high_low(df, n=20):
-    cols = ["Ticker", "Sector", "LTP", "52w High", "% From 52w High", "Trade Signal"]
-    near_high = df[df["Near 52w High"]].sort_values("% From 52w High", ascending=False).head(n)[cols].reset_index(drop=True)
-    cols_low = ["Ticker", "Sector", "LTP", "52w Low", "% From 52w Low", "Trade Signal"]
-    near_low = df[df["Near 52w Low"]].sort_values("% From 52w Low", ascending=True).head(n)[cols_low].reset_index(drop=True)
+    cols_h = ["Ticker", "Sector", "LTP", "% Chg (1d)", "52w High", "% From 52w High", "Trade Signal"]
+    near_high = df[df["Near 52w High"]].sort_values("% From 52w High", ascending=False).head(n)[cols_h].reset_index(drop=True)
+    cols_l = ["Ticker", "Sector", "LTP", "% Chg (1d)", "52w Low", "% From 52w Low", "Trade Signal"]
+    near_low = df[df["Near 52w Low"]].sort_values("% From 52w Low", ascending=True).head(n)[cols_l].reset_index(drop=True)
     return near_high, near_low
+
+
+def view_range_breakout(df, breakout_period=20, n=20):
+    hcol, lcol = f"Range High ({breakout_period}d)", f"Range Low ({breakout_period}d)"
+    cols_out = ["Ticker", "Sector", "LTP", "% Chg (1d)", hcol, "Trade Signal"]
+    cols_down = ["Ticker", "Sector", "LTP", "% Chg (1d)", lcol, "Trade Signal"]
+    breakout = df[df["Breakout"]].sort_values("% Chg (1d)", ascending=False).head(n)[cols_out].reset_index(drop=True)
+    breakdown = df[df["Breakdown"]].sort_values("% Chg (1d)", ascending=True).head(n)[cols_down].reset_index(drop=True)
+    return breakout, breakdown
 
 
 def view_sector_overview(df):
@@ -302,6 +336,7 @@ def view_sector_overview(df):
         df.groupby("Sector")
         .agg(**{
             "Avg R Factor": ("R Factor", "mean"),
+            "Avg % Chg (1d)": ("% Chg (1d)", "mean"),
             "Avg Score": ("Score", "mean"),
             "Bullish Count": ("Trend Signal", lambda s: (s == "Bullish").sum()),
             "Bearish Count": ("Trend Signal", lambda s: (s == "Bearish").sum()),
@@ -310,6 +345,7 @@ def view_sector_overview(df):
         .reset_index()
     )
     agg["Avg R Factor"] = agg["Avg R Factor"].round(2)
+    agg["Avg % Chg (1d)"] = agg["Avg % Chg (1d)"].round(2)
     agg["Avg Score"] = agg["Avg Score"].round(2)
 
     def _bias(row):
@@ -323,60 +359,78 @@ def view_sector_overview(df):
     return agg.sort_values("Avg R Factor", ascending=False).reset_index(drop=True)
 
 
-def view_sector_detail(df, sector):
-    cols = ["Ticker", "LTP", "% Chg (1d)", "R Factor", "Trend Signal", "RSI(14)",
-            "Vol Surge (x avg)", "ATR(14)", "Suggested Stop (long)", "Trade Signal"]
+def view_sector_detail(df, sector, lookback_col):
+    cols = ["Ticker", "LTP", "% Chg (1d)", lookback_col, "R Factor", "Trend Signal",
+            "RSI(14)", "Vol Surge (x avg)", "ATR(14)", "Suggested Stop (long)", "Trade Signal"]
+    cols = [c for c in cols if c in df.columns]
     sub = df[df["Sector"] == sector].sort_values("R Factor", ascending=False)
     return sub[cols].reset_index(drop=True)
 
 
 def overall_market_signal(df):
-    """
-    One aggregate call for the whole scanned universe — shown at the very
-    top of the page. Combines average composite score with market breadth
-    (% of stocks bullish vs bearish).
-    """
     if df.empty:
         return {"label": "N/A", "avg_score": 0, "pct_buy": 0, "pct_sell": 0,
                 "pct_hold": 0, "total": 0}
-
     total = len(df)
     pct_buy = round((df["Trade Signal"].isin(["Buy", "Strong Buy"]).sum() / total) * 100, 1)
     pct_sell = round((df["Trade Signal"].isin(["Sell", "Strong Sell"]).sum() / total) * 100, 1)
     pct_hold = round(100 - pct_buy - pct_sell, 1)
     avg_score = round(df["Score"].mean(), 2)
-
     if avg_score >= 1.5:
         label = "Buy"
     elif avg_score <= -1.5:
         label = "Sell"
     else:
         label = "Neutral"
+    return {"label": label, "avg_score": avg_score, "pct_buy": pct_buy,
+            "pct_sell": pct_sell, "pct_hold": pct_hold, "total": total}
 
-    return {
-        "label": label, "avg_score": avg_score, "pct_buy": pct_buy,
-        "pct_sell": pct_sell, "pct_hold": pct_hold, "total": total,
-    }
+
+def alerts_summary(df, breakout_period=20):
+    """Counts + top tickers for every 'special event' flag, for the flash
+    panel shown beside the overall market signal."""
+    def top_tickers(mask, n=5):
+        return df.loc[mask, "Ticker"].head(n).tolist()
+
+    items = [
+        ("Breakout", df["Breakout"], "🚀"),
+        ("Breakdown", df["Breakdown"], "🔻"),
+        ("At Day High", df["At Day High"], "📍"),
+        ("At Day Low", df["At Day Low"], "📍"),
+        ("Near 52w High", df["Near 52w High"], "📅"),
+        ("Near 52w Low", df["Near 52w Low"], "📅"),
+    ]
+    out = []
+    for label, mask, icon in items:
+        count = int(mask.sum())
+        if count > 0:
+            out.append({"label": label, "icon": icon, "count": count, "tickers": top_tickers(mask)})
+    return out
 
 
 def run_full_scan_bundle(lookback: int = 20, rs_bull_threshold: float = 2.0,
                           rs_bear_threshold: float = -2.0, vol_threshold: float = 2.0,
-                          top_n: int = 15):
-    """One fetch, one master table, every section derived from it."""
+                          breakout_period: int = 20, top_n: int = 15):
     raw = _fetch_full_market()
     freshness = data_freshness_from_raw(raw)
     master = build_master_table(lookback=lookback, rs_bull_threshold=rs_bull_threshold,
-                                 rs_bear_threshold=rs_bear_threshold, raw=raw)
+                                 rs_bear_threshold=rs_bear_threshold,
+                                 breakout_period=breakout_period, raw=raw)
 
     gainers, losers = view_gainers_losers(master, n=top_n)
     day_high, day_low = view_day_high_low(master, n=top_n)
     w52_high, w52_low = view_52w_high_low(master, n=top_n)
+    breakout, breakdown = view_range_breakout(master, breakout_period=breakout_period, n=top_n)
     sector_agg = view_sector_overview(master)
-    sector_detail = {s: view_sector_detail(master, s) for s in SECTOR_STOCKS}
+    lookback_col = f"%Chg ({lookback}d)"
+    sector_detail = {s: view_sector_detail(master, s, lookback_col) for s in SECTOR_STOCKS}
+
+    now_ist = datetime.datetime.now(IST)
 
     return {
         "freshness": freshness,
         "overall": overall_market_signal(master),
+        "alerts": alerts_summary(master, breakout_period=breakout_period),
         "bullish": view_most_bullish(master, n=top_n),
         "bearish": view_most_bearish(master, n=top_n),
         "momentum": view_momentum(master, n=top_n),
@@ -387,8 +441,10 @@ def run_full_scan_bundle(lookback: int = 20, rs_bull_threshold: float = 2.0,
         "day_low": day_low,
         "w52_high": w52_high,
         "w52_low": w52_low,
+        "breakout": breakout,
+        "breakdown": breakdown,
         "sector_agg": sector_agg,
         "sector_detail": sector_detail,
         "master": master,
-        "fetched_at": datetime.datetime.now().strftime("%H:%M:%S"),
+        "fetched_at": now_ist.strftime("%d-%m-%Y %H:%M:%S IST"),
     }
