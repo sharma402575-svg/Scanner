@@ -21,6 +21,7 @@ with st.sidebar:
     lookback = st.slider("R Factor lookback (trading days)", 5, 60, 20)
     bull_th = st.slider("Bullish R Factor threshold (%)", 0.0, 10.0, 2.0, 0.5)
     bear_th = st.slider("Bearish R Factor threshold (%)", -10.0, 0.0, -2.0, 0.5)
+    breakout_period = st.slider("Range breakout lookback (days)", 5, 60, 20)
     top_n = st.slider("How many rows per list", 5, 30, 15)
     vol_th = st.slider("Volume surge threshold (x avg)", 1.5, 10.0, 2.0, 0.5)
     st.divider()
@@ -28,13 +29,13 @@ with st.sidebar:
     interval_min = st.selectbox("Refresh every", [1, 2, 5, 10, 15], index=2,
                                  disabled=not auto_refresh, format_func=lambda x: f"{x} min")
     st.divider()
-    st.caption("Data: Yahoo Finance (delayed ~15-20 min). NSE stocks.")
+    st.caption("Data: Yahoo Finance (delayed ~15-20 min). NSE stocks. Times shown in IST.")
     st.markdown("**How Trade Signal is calculated**")
     st.caption(
-        "Points system: R Factor vs sector (±2), trend vs 20DMA (±1), "
-        "RSI zone (±1), momentum+volume (±1), proximity to 52w high/low "
-        "(±1). Score ≥4 Strong Buy, ≥2 Buy, ≤-4 Strong Sell, ≤-2 Sell, "
-        "else Hold. This is a rules-based heuristic, not financial advice."
+        "Points: R Factor vs sector (±2), trend vs 20DMA (±1), RSI zone (±1), "
+        "momentum+volume (±1), 52w high/low proximity (±1), range breakout/"
+        "breakdown (±1). Score ≥4 Strong Buy, ≥2 Buy, ≤-4 Strong Sell, ≤-2 "
+        "Sell, else Hold. Rules-based heuristic — not financial advice."
     )
 
 if auto_refresh:
@@ -52,7 +53,7 @@ if should_run:
     with st.spinner("Fetching live data and running all scans..."):
         st.session_state["bundle"] = run_full_scan_bundle(
             lookback=lookback, rs_bull_threshold=bull_th, rs_bear_threshold=bear_th,
-            vol_threshold=vol_th, top_n=top_n,
+            vol_threshold=vol_th, breakout_period=breakout_period, top_n=top_n,
         )
 
 bundle = st.session_state.get("bundle")
@@ -61,31 +62,54 @@ if not bundle:
     st.stop()
 
 
-# ---------- OVERALL MARKET SIGNAL — always first thing visible ----------
+# ---------- OVERALL MARKET SIGNAL + ALERTS FLASH — compact, side by side ----------
 
 overall = bundle["overall"]
 f = bundle["freshness"]
+alerts = bundle["alerts"]
 
-signal_colors = {
-    "Buy": ("#16a34a", "🟢"), "Sell": ("#dc2626", "🔴"), "Neutral": ("#6b7280", "⚪"),
-}
+signal_colors = {"Buy": ("#16a34a", "🟢"), "Sell": ("#dc2626", "🔴"), "Neutral": ("#6b7280", "⚪")}
 color, dot = signal_colors.get(overall["label"], ("#6b7280", "⚪"))
 
-st.markdown(
-    f"""
-    <div style="border: 2px solid {color}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 0.75rem;">
-        <div style="font-size: 14px; color: #888; margin-bottom: 4px;">OVERALL MARKET SIGNAL · {overall['total']} stocks scanned</div>
-        <div style="font-size: 32px; font-weight: 700; color: {color};">{dot} {overall['label']}</div>
-        <div style="font-size: 14px; margin-top: 8px;">
-            Avg score: <b>{overall['avg_score']}</b> &nbsp;|&nbsp;
-            Buy-leaning: <b style="color:#16a34a">{overall['pct_buy']}%</b> &nbsp;|&nbsp;
-            Sell-leaning: <b style="color:#dc2626">{overall['pct_sell']}%</b> &nbsp;|&nbsp;
-            Hold: <b>{overall['pct_hold']}%</b>
+sig_col, alert_col = st.columns([1, 2])
+
+with sig_col:
+    st.markdown(
+        f"""
+        <div style="border: 2px solid {color}; border-radius: 10px; padding: 0.6rem 0.9rem; height: 100%;">
+            <div style="font-size: 11px; color: #888;">OVERALL SIGNAL · {overall['total']} stocks</div>
+            <div style="font-size: 22px; font-weight: 700; color: {color}; line-height: 1.3;">{dot} {overall['label']}</div>
+            <div style="font-size: 12px; margin-top: 4px;">
+                Score <b>{overall['avg_score']}</b> ·
+                <span style="color:#16a34a">Buy {overall['pct_buy']}%</span> ·
+                <span style="color:#dc2626">Sell {overall['pct_sell']}%</span> ·
+                Hold {overall['pct_hold']}%
+            </div>
         </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+        """,
+        unsafe_allow_html=True,
+    )
+
+with alert_col:
+    if alerts:
+        badges = ""
+        for a in alerts:
+            tickers_str = ", ".join(a["tickers"])
+            badges += (
+                f'<span style="display:inline-block; margin:2px 6px 2px 0; padding:4px 10px; '
+                f'border-radius: 999px; background:#1f2937; border:1px solid #374151; font-size:12px;">'
+                f'{a["icon"]} <b>{a["label"]}</b>: {a["count"]} '
+                f'<span style="color:#9ca3af;">({tickers_str}{"…" if a["count"] > len(a["tickers"]) else ""})</span>'
+                f'</span>'
+            )
+        st.markdown(
+            f'<div style="border-radius: 10px; padding: 0.6rem 0.9rem; height: 100%;">'
+            f'<div style="font-size: 11px; color: #888; margin-bottom: 4px;">🔔 LIVE ALERTS</div>'
+            f'{badges}</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("🔔 No breakout, breakdown, day-high/low, or 52w-high/low alerts right now.")
 
 if f["is_stale"]:
     st.warning(
@@ -105,7 +129,7 @@ st.caption(
 
 
 def style_row(val):
-    if val in ("Bullish", "Up", "Buy", "Strong Buy"):
+    if val in ("Bullish", "Up", "Buy", "Strong Buy", True):
         return "color: #16a34a; font-weight: 600"
     if val in ("Bearish", "Down", "Sell", "Strong Sell"):
         return "color: #dc2626; font-weight: 600"
@@ -117,12 +141,12 @@ def show(df: pd.DataFrame, style_cols=("Trend Signal", "Trade Signal", "Sector B
         st.info("No matches right now.")
         return
     present = [c for c in style_cols if c in df.columns]
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    styler = df.style.format(precision=2, subset=numeric_cols) if numeric_cols else df.style
     if present:
-        styler = df.style
         style_fn = getattr(styler, "map", None) or styler.applymap
-        st.dataframe(style_fn(style_row, subset=present), use_container_width=True, hide_index=True)
-    else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        styler = style_fn(style_row, subset=present)
+    st.dataframe(styler, use_container_width=True, hide_index=True)
 
 
 st.divider()
@@ -178,9 +202,22 @@ with c8:
     show(bundle["w52_low"])
 
 st.divider()
+st.header("📦 Range breakout / breakdown")
+st.caption(f"Close breaking above/below its prior {breakout_period}-day range.")
+c9, c10 = st.columns(2)
+with c9:
+    st.subheader("Breakout")
+    show(bundle["breakout"])
+with c10:
+    st.subheader("Breakdown")
+    show(bundle["breakdown"])
+
+st.divider()
 st.header("🧭 Sector overview")
 st.caption("Expand a sector to see every stock in it with its own R Factor, trend and trade signal.")
 show(bundle["sector_agg"])
 for sector in bundle["sector_agg"]["Sector"]:
-    with st.expander(f"{sector} — all stocks"):
+    stocks_in_sector = len(SECTOR_STOCKS[sector])
+    shown = len(bundle["sector_detail"][sector])
+    with st.expander(f"{sector} — {shown}/{stocks_in_sector} stocks"):
         show(bundle["sector_detail"][sector])
