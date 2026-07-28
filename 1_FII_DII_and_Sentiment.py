@@ -14,9 +14,6 @@ IST = ZoneInfo("Asia/Kolkata")
 
 st.set_page_config(page_title="FII/DII & Sentiment", layout="wide", page_icon="🧾")
 
-with st.sidebar:
-    st.page_link("app.py", label="📊 Live Scanner", icon="⬅️")
-
 st.title("🧾 FII/DII & Sentiment")
 st.caption(
     "Manual entry — FII/DII flows, PCR, VIX, breadth, and F&O OI data aren't "
