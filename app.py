@@ -14,6 +14,7 @@ from sectors import SECTOR_STOCKS
 from scanner import (
     scan_sector, most_bullish, most_bearish, top_gainers_losers,
     momentum_scan, volume_surge_scan, sector_overview_with_detail,
+    check_data_freshness,
 )
 
 st.set_page_config(page_title="Sector Trade Scanner", layout="wide")
@@ -24,6 +25,22 @@ st.caption(
     "same period. Positive = beating the sector (bullish tilt), "
     "negative = lagging it (bearish tilt)."
 )
+
+with st.spinner("Checking data freshness..."):
+    try:
+        freshness = check_data_freshness()
+        if freshness["is_stale"]:
+            st.warning(
+                f"⚠️ Latest data available from Yahoo Finance is dated "
+                f"**{freshness['last_data_date']}** (today is {freshness['today']}). "
+                f"If markets are closed, this is expected — Yahoo can take a few "
+                f"hours to sync the final end-of-day bar. Any 'today' numbers "
+                f"below are as of that date, not live."
+            )
+        else:
+            st.success(f"Data as of **{freshness['last_data_date']}** (up to date).")
+    except Exception:
+        st.info("Could not check data freshness right now — proceeding anyway.")
 
 with st.sidebar:
     st.header("Settings")
@@ -55,7 +72,10 @@ def show(df: pd.DataFrame, signal_col: str = "Signal"):
         st.info("No data returned — try again in a moment (Yahoo Finance may be rate-limiting).")
         return
     if signal_col and signal_col in df.columns:
-        st.dataframe(df.style.applymap(style_signal, subset=[signal_col]),
+        styler = df.style
+        # pandas >= 2.1 renamed Styler.applymap to Styler.map; support both
+        style_fn = getattr(styler, "map", None) or styler.applymap
+        st.dataframe(style_fn(style_signal, subset=[signal_col]),
                      use_container_width=True, hide_index=True)
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
