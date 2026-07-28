@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/30447823/README.md)
+[Uploading README.md…]()
 # Sector Trade Scanner
 
 A single-page NSE (India) stock scanner. One click refreshes everything
@@ -70,6 +70,28 @@ its own URL, linked from the sidebar:
   Live Scanner page never touches this one — it only updates when you
   click its own "Compute Sentiment" button. You can right-click its
   sidebar link and "open in new tab" for a true separate browser tab.
+
+## NSE Participant OI → Tomorrow's Sentiment (weekly log)
+
+NSE publishes an official **"Participant wise Open Interest"** CSV free,
+daily, on nseindia.com — rows for Client, DII, FII, Pro, TOTAL, with
+Index/Stock Futures and Options Long/Short contract counts. Paste that
+CSV directly into this section and it:
+
+1. Reads the **FII** and **DII** rows specifically.
+2. Scores two things per participant: **Index Futures Long %** (straight
+   directional positioning) and **Index Options bias** (long calls + short
+   puts vs short calls + long puts — a standard bullish/bearish tell).
+3. Weights FII higher (1.5x) than DII (0.8x), since FII flows are the more
+   closely watched next-day driver.
+4. Gives one reading: **Bullish / Bearish / Neutral for tomorrow**, with
+   "Show logic" breaking down exactly how each number contributed.
+5. **Saves it to a rolling 7-day log** (this week) — a compact table of
+   date/sentiment/score, with each day expandable for full detail.
+
+Same session-only caveat as the manual entry history above — this log
+resets if the browser tab closes or the app restarts. Ask if you want
+permanent day-to-day storage added (needs a small database).
 
 ## FII/DII & Sentiment page (manual entry)
 
