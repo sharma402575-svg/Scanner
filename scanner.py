@@ -295,12 +295,12 @@ def build_master_table(lookback: int = 20, rs_bull_threshold: float = 2.0,
 
 def view_most_bullish(df, n=15):
     cols = ["Ticker", "Sector", "LTP", "% Chg (1d)", "R Factor", "Trend Signal", "Trade Signal"]
-    return df[df["Trend Signal"] == "Bullish"].sort_values("R Factor", ascending=False).head(n)[cols].reset_index(drop=True)
+    return df[df["Trend Signal"] == "Bullish"].sort_values("% Chg (1d)", ascending=False).head(n)[cols].reset_index(drop=True)
 
 
 def view_most_bearish(df, n=15):
     cols = ["Ticker", "Sector", "LTP", "% Chg (1d)", "R Factor", "Trend Signal", "Trade Signal"]
-    return df[df["Trend Signal"] == "Bearish"].sort_values("R Factor", ascending=True).head(n)[cols].reset_index(drop=True)
+    return df[df["Trend Signal"] == "Bearish"].sort_values("% Chg (1d)", ascending=True).head(n)[cols].reset_index(drop=True)
 
 
 def view_momentum(df, n=15):
