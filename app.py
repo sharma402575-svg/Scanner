@@ -1,19 +1,8 @@
 """
 Sector Trade Scanner — Home page (Live Scanner)
 
-This is a multi-page Streamlit app:
-  - app.py                                -> "Live Scanner" (this page)
-  - pages/1_FII_DII_and_Sentiment.py      -> "FII/DII & Sentiment" (separate page/URL)
-
-Streamlit shows both as links in the sidebar — each opens as its own page
-(you can right-click a sidebar link and "open in new tab" for a true
-separate browser tab).
-
 Run with:
     streamlit run app.py
-
-Requires:
-    pip install -r requirements.txt
 """
 
 import streamlit as st
@@ -24,17 +13,38 @@ from scanner import run_full_scan_bundle
 
 st.set_page_config(page_title="Sector Trade Scanner", layout="wide", page_icon="📊")
 
+# ---------------------------------------------------------------------
+# Settings persist across refresh/auto-refresh AND across a real browser
+# reload by storing them in the URL's query string. Reloading the page,
+# or sharing the URL, keeps whatever settings were last used.
+# ---------------------------------------------------------------------
+qp = st.query_params
+
+
+def _qp_num(name, default, cast=float):
+    val = qp.get(name)
+    if val is None:
+        return default
+    try:
+        return cast(val)
+    except (TypeError, ValueError):
+        return default
+
+
 with st.sidebar:
     st.header("Settings")
-    lookback = st.slider("R Factor lookback (trading days)", 5, 60, 20)
-    bull_th = st.slider("Bullish R Factor threshold (%)", 0.0, 10.0, 2.0, 0.5)
-    bear_th = st.slider("Bearish R Factor threshold (%)", -10.0, 0.0, -2.0, 0.5)
-    breakout_period = st.slider("Range breakout lookback (days)", 5, 60, 20)
-    top_n = st.slider("How many rows per list", 5, 30, 15)
-    vol_th = st.slider("Volume surge threshold (x avg)", 1.5, 10.0, 2.0, 0.5)
+    lookback = st.slider("R Factor lookback (trading days)", 5, 60, _qp_num("lookback", 20, int))
+    bull_th = st.slider("Bullish R Factor threshold (%)", 0.0, 10.0, _qp_num("bull_th", 2.0), 0.5)
+    bear_th = st.slider("Bearish R Factor threshold (%)", -10.0, 0.0, _qp_num("bear_th", -2.0), 0.5)
+    breakout_period = st.slider("Range breakout lookback (days)", 5, 60, _qp_num("breakout", 20, int))
+    top_n = st.slider("How many rows per list", 5, 30, _qp_num("topn", 15, int))
+    vol_th = st.slider("Volume surge threshold (x avg)", 1.5, 10.0, _qp_num("volth", 2.0), 0.5)
     st.divider()
-    auto_refresh = st.toggle("Auto-refresh", value=False)
-    interval_min = st.selectbox("Refresh every", [1, 2, 5, 10, 15], index=2,
+    auto_refresh = st.toggle("Auto-refresh", value=bool(_qp_num("auto", 0, int)))
+    interval_options = [1, 2, 5, 10, 15]
+    default_interval = _qp_num("interval", 5, int)
+    default_idx = interval_options.index(default_interval) if default_interval in interval_options else 2
+    interval_min = st.selectbox("Refresh every", interval_options, index=default_idx,
                                  disabled=not auto_refresh, format_func=lambda x: f"{x} min")
     st.divider()
     st.caption("Data: Yahoo Finance (delayed ~15-20 min). NSE stocks. Times shown in IST.")
@@ -45,6 +55,16 @@ with st.sidebar:
         "breakdown (±1). Score ≥4 Strong Buy, ≥2 Buy, ≤-4 Strong Sell, ≤-2 "
         "Sell, else Hold. Rules-based heuristic — not financial advice."
     )
+
+# Sync current settings back into the URL so a reload/share keeps them.
+st.query_params["lookback"] = str(lookback)
+st.query_params["bull_th"] = str(bull_th)
+st.query_params["bear_th"] = str(bear_th)
+st.query_params["breakout"] = str(breakout_period)
+st.query_params["topn"] = str(top_n)
+st.query_params["volth"] = str(vol_th)
+st.query_params["auto"] = str(int(auto_refresh))
+st.query_params["interval"] = str(interval_min)
 
 if auto_refresh:
     st_autorefresh(interval=interval_min * 60 * 1000, key="auto_refresh_timer")
@@ -61,16 +81,24 @@ def style_row(val):
 
 
 def show(df: pd.DataFrame, style_cols=("Trend Signal", "Trade Signal", "Sector Bias", "Direction", "Bias")):
+    """
+    Renders a table in a FIXED order (whatever the scan already sorted
+    it by — most gainers/most bearish/etc. on top) with no interactive
+    column-sorting, so the order can never get scrambled by clicking a
+    header. Values shown to 2 decimals.
+    """
     if df is None or df.empty:
         st.info("No matches right now.")
         return
-    present = [c for c in style_cols if c in df.columns]
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    styler = df.style.format(precision=2, subset=numeric_cols) if numeric_cols else df.style
+    df2 = df.reset_index(drop=True).copy()
+    df2.index = [""] * len(df2)  # blank index column, keeps the view clean
+    present = [c for c in style_cols if c in df2.columns]
+    numeric_cols = df2.select_dtypes(include="number").columns.tolist()
+    styler = df2.style.format(precision=2, subset=numeric_cols) if numeric_cols else df2.style
     if present:
         style_fn = getattr(styler, "map", None) or styler.applymap
         styler = style_fn(style_row, subset=present)
-    st.dataframe(styler, use_container_width=True, hide_index=True)
+    st.table(styler)
 
 
 col_btn, _ = st.columns([1, 4])
@@ -90,51 +118,7 @@ if not bundle:
     st.info("Click **Refresh all data** to load the scanner.")
     st.stop()
 
-overall = bundle["overall"]
 f = bundle["freshness"]
-alerts = bundle["alerts"]
-
-signal_colors = {"Buy": ("#16a34a", "🟢"), "Sell": ("#b91c1c", "🔴"), "Neutral": ("#6b7280", "⚪")}
-color, dot = signal_colors.get(overall["label"], ("#6b7280", "⚪"))
-
-sig_col, alert_col = st.columns([1, 2])
-with sig_col:
-    st.markdown(
-        f"""
-        <div style="border: 2px solid {color}; border-radius: 10px; padding: 0.6rem 0.9rem; height: 100%;">
-            <div style="font-size: 11px; color: #888;">OVERALL SIGNAL · {overall['total']} stocks</div>
-            <div style="font-size: 22px; font-weight: 700; color: {color}; line-height: 1.3;">{dot} {overall['label']}</div>
-            <div style="font-size: 12px; margin-top: 4px;">
-                Score <b>{overall['avg_score']}</b> ·
-                <span style="color:#16a34a">Buy {overall['pct_buy']}%</span> ·
-                <span style="color:#b91c1c">Sell {overall['pct_sell']}%</span> ·
-                Hold {overall['pct_hold']}%
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with alert_col:
-    if alerts:
-        badges = ""
-        for a in alerts:
-            tickers_str = ", ".join(a["tickers"])
-            badges += (
-                f'<span style="display:inline-block; margin:2px 6px 2px 0; padding:4px 10px; '
-                f'border-radius: 999px; background:#1f2937; border:1px solid #374151; font-size:12px;">'
-                f'{a["icon"]} <b>{a["label"]}</b>: {a["count"]} '
-                f'<span style="color:#9ca3af;">({tickers_str}{"…" if a["count"] > len(a["tickers"]) else ""})</span>'
-                f'</span>'
-            )
-        st.markdown(
-            f'<div style="border-radius: 10px; padding: 0.6rem 0.9rem; height: 100%;">'
-            f'<div style="font-size: 11px; color: #888; margin-bottom: 4px;">🔔 LIVE ALERTS</div>'
-            f'{badges}</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.caption("🔔 No breakout, breakdown, day-high/low, or 52w-high/low alerts right now.")
-
 if f["is_stale"]:
     st.warning(
         f"⚠️ Data as of **{f['last_data_date']}** (today is {f['today']}) · "
@@ -160,6 +144,17 @@ with c1:
 with c2:
     st.subheader("Bearish")
     show(bundle["bearish"])
+
+st.divider()
+st.header("📐 200 EMA crossovers")
+st.caption("Stocks that just crossed above/below their 200-day EMA — a widely-watched long-term trend flip.")
+c11, c12 = st.columns(2)
+with c11:
+    st.subheader("Crossed above (bullish)")
+    show(bundle["ema_up"])
+with c12:
+    st.subheader("Crossed below (bearish)")
+    show(bundle["ema_down"])
 
 st.divider()
 st.header("🔥 High momentum stocks")
