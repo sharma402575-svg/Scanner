@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/30459490/README.md)
+[Uploading README.md…]()
 # Sector Trade Scanner
 
 A single-page NSE (India) stock scanner. One click refreshes everything
@@ -7,24 +7,32 @@ live alerts pinned at the very top.
 
 ## What's on the page (top to bottom)
 
-1. **Overall Market Signal + Live Alerts** — a compact Buy/Sell/Neutral
-   card side by side with a flash panel of any stocks currently showing a
-   breakout, breakdown, day-high/low touch, or 52-week high/low proximity.
-2. **Most bullish / bearish** — whole-market stocks ranked by R Factor.
+1. **Most bullish / bearish** — whole-market stocks ranked by R Factor.
+2. **200 EMA crossovers** — stocks that just crossed above (bullish) or
+   below (bearish) their 200-day EMA, a widely-watched long-term trend
+   signal. Two separate lists.
 3. **Momentum** — fastest movers (rate-of-change + volume surge).
 4. **Gainers & losers** — today's biggest % movers.
 5. **Volume surge alerts** — unusual volume right now.
 6. **Day high / day low** — stocks at (or within 0.3% of) today's high/low.
 7. **52-week high / low** — stocks within 3% of their 52-week high/low.
 8. **Range breakout / breakdown** — stocks closing outside their prior
-   N-day trading range (N is adjustable in the sidebar, default 20 days).
+   N-day trading range (N adjustable in the sidebar, default 20 days).
 9. **Sector overview** — average R Factor per sector, expandable to every
-   stock in that sector (the expander title shows e.g. "BANK — 12/12
-   stocks" so you can see if any were dropped due to a data fetch issue).
+   stock in that sector.
 
-Every section shows a **Trade Signal** (Strong Buy / Buy / Hold / Sell /
-Strong Sell) per stock, and all percentage/numeric values are shown to
-2 decimal places.
+Every table shows a **Trade Signal** (Strong Buy / Buy / Hold / Sell /
+Strong Sell) per stock, 2 decimal places throughout, and is rendered in a
+**fixed, pre-sorted order that cannot be re-sorted by clicking a column
+header** — most gainers/highest R Factor/etc. always stay on top exactly
+as computed.
+
+## Settings persist
+
+Every sidebar setting (lookback, thresholds, auto-refresh, etc.) is saved
+into the page's URL as you change it. Reloading the browser, or sharing
+the URL with someone else, keeps those exact settings — you don't need to
+redo them each time.
 
 ## R Factor
 
@@ -157,9 +165,9 @@ regardless of what timezone the app happens to be hosted in.
 
 - `sectors.py` — sector → stock list (BANK now has all 12 Nifty Bank
   constituents), sector → benchmark index.
-- `scanner.py` — `build_master_table()` computes every metric once;
-  `view_*` functions filter/sort it; `overall_market_signal()` and
-  `alerts_summary()` power the top banner.
+- `scanner.py` — `build_master_table()` computes every metric once (R
+  Factor, RSI, ATR, momentum, 52w high/low, range breakout/breakdown, 200
+  EMA crossover); `view_*` functions filter/sort it for each section.
 - `live_data.py` — live India VIX (Yahoo Finance) and Nifty PCR (NSE
   option-chain API) fetchers, used by the sentiment page's fetch button.
 - `sentiment.py` — manual FII/DII/PCR/VIX/breadth scoring and F&O OI
