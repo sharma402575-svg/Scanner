@@ -229,6 +229,17 @@ def build_master_table(lookback: int = 20, rs_bull_threshold: float = 2.0,
             breakout = bool(ltp > range_high)
             breakdown = bool(ltp < range_low)
 
+        # 200-day EMA crossover — did price cross above/below it just now?
+        ema_cross_up = ema_cross_down = False
+        ema200_val = None
+        if len(close) >= 201:
+            ema200_series = close.ewm(span=200, adjust=False).mean()
+            ema200_val = float(ema200_series.iloc[-1])
+            prev_close_v = float(close.iloc[-2])
+            prev_ema200 = float(ema200_series.iloc[-2])
+            ema_cross_up = bool(prev_close_v <= prev_ema200 and ltp > ema200_val)
+            ema_cross_down = bool(prev_close_v >= prev_ema200 and ltp < ema200_val)
+
         if r_factor is not None and not np.isnan(r_factor):
             if r_factor >= rs_bull_threshold and above20:
                 trend_signal = "Bullish"
@@ -269,6 +280,9 @@ def build_master_table(lookback: int = 20, rs_bull_threshold: float = 2.0,
             f"Range Low ({breakout_period}d)": round(range_low, 2) if range_low else None,
             "Breakout": breakout,
             "Breakdown": breakdown,
+            "200 EMA": round(ema200_val, 2) if ema200_val is not None else None,
+            "Crossed Above 200EMA": ema_cross_up,
+            "Crossed Below 200EMA": ema_cross_down,
             "Score": score,
             "Trade Signal": trade_signal,
         })
@@ -329,6 +343,13 @@ def view_range_breakout(df, breakout_period=20, n=20):
     breakout = df[df["Breakout"]].sort_values("% Chg (1d)", ascending=False).head(n)[cols_out].reset_index(drop=True)
     breakdown = df[df["Breakdown"]].sort_values("% Chg (1d)", ascending=True).head(n)[cols_down].reset_index(drop=True)
     return breakout, breakdown
+
+
+def view_ema200_cross(df, n=20):
+    cols = ["Ticker", "Sector", "LTP", "% Chg (1d)", "200 EMA", "Trade Signal"]
+    up = df[df["Crossed Above 200EMA"]].sort_values("% Chg (1d)", ascending=False).head(n)[cols].reset_index(drop=True)
+    down = df[df["Crossed Below 200EMA"]].sort_values("% Chg (1d)", ascending=True).head(n)[cols].reset_index(drop=True)
+    return up, down
 
 
 def view_sector_overview(df):
@@ -421,6 +442,7 @@ def run_full_scan_bundle(lookback: int = 20, rs_bull_threshold: float = 2.0,
     day_high, day_low = view_day_high_low(master, n=top_n)
     w52_high, w52_low = view_52w_high_low(master, n=top_n)
     breakout, breakdown = view_range_breakout(master, breakout_period=breakout_period, n=top_n)
+    ema_up, ema_down = view_ema200_cross(master, n=top_n)
     sector_agg = view_sector_overview(master)
     lookback_col = f"%Chg ({lookback}d)"
     sector_detail = {s: view_sector_detail(master, s, lookback_col) for s in SECTOR_STOCKS}
@@ -443,6 +465,8 @@ def run_full_scan_bundle(lookback: int = 20, rs_bull_threshold: float = 2.0,
         "w52_low": w52_low,
         "breakout": breakout,
         "breakdown": breakdown,
+        "ema_up": ema_up,
+        "ema_down": ema_down,
         "sector_agg": sector_agg,
         "sector_detail": sector_detail,
         "master": master,
