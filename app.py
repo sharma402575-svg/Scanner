@@ -91,13 +91,14 @@ def show(df: pd.DataFrame, style_cols=("Trend Signal", "Trade Signal", "Sector B
         st.info("No matches right now.")
         return
     df2 = df.reset_index(drop=True).copy()
-    df2.index = [""] * len(df2)  # blank index column, keeps the view clean
     present = [c for c in style_cols if c in df2.columns]
     numeric_cols = df2.select_dtypes(include="number").columns.tolist()
     styler = df2.style.format(precision=2, subset=numeric_cols) if numeric_cols else df2.style
     if present:
         style_fn = getattr(styler, "map", None) or styler.applymap
         styler = style_fn(style_row, subset=present)
+    hide_fn = getattr(styler, "hide", None)
+    styler = hide_fn(axis="index") if hide_fn else styler.hide_index()
     st.table(styler)
 
 
