@@ -1,129 +1,246 @@
-import io
-import pandas as pd
+"""
+FII/DII & Sentiment — separate page (own URL), independent of the Live
+Scanner page. Nothing here is ever affected by that page's refresh or
+auto-refresh — it only updates when you act on this page.
+
+Everything below feeds into ONE combined "Tomorrow's Sentiment" score —
+not separate scores in separate boxes. Fill in whatever macro numbers you
+have (or fetch VIX/PCR live), then upload the Participant OI file; both
+sets of factors are combined into a single end-of-day call for tomorrow.
+"""
+
+import datetime
+from zoneinfo import ZoneInfo
 import streamlit as st
+import pandas as pd
+from sentiment import parse_optional_float, parse_fno_text, parse_participant_csv, compute_tomorrow_sentiment
+try:
+    from live_data import fetch_india_vix, fetch_nifty_pcr
+    LIVE_FETCH_AVAILABLE = True
+except ImportError:
+    LIVE_FETCH_AVAILABLE = False
 
-st.set_page_config(page_title="FII/DII Sentiment & Market Analyzer", layout="wide")
+IST = ZoneInfo("Asia/Kolkata")
 
-st.title("📊 F&O Participant OI & Market Sentiment Analyzer")
-st.write(
-    "Upload your participant-wise open interest CSV file to instantly evaluate"
-    " the market bias."
+st.set_page_config(page_title="FII/DII & Sentiment", layout="wide", page_icon="🧾")
+
+st.title("🧾 FII/DII & Sentiment — Tomorrow's Call")
+st.caption(
+    "Fill in what you have below (VIX/PCR can be fetched live), then upload the "
+    "NSE Participant OI file — everything combines into ONE Tomorrow's Sentiment "
+    "reading at the bottom, with the full logic shown. This page is separate "
+    "from the Live Scanner and unaffected by its refresh."
 )
 
-# Sidebar for Manual Metrics
-st.sidebar.header("Market Parameters")
-manual_vix = st.sidebar.number_input(
-    "India VIX (Optional)", min_value=0.0, value=13.5, step=0.1
-)
-manual_pcr = st.sidebar.number_input(
-    "Nifty PCR (Optional)", min_value=0.0, value=1.0, step=0.01
-)
 
-# File Uploader
-uploaded_file = st.file_uploader(
-    "Upload Participant OI CSV file", type=["csv"]
-)
+def style_row(val):
+    if val in ("Bullish", "Strongly Bullish", "Bullish for tomorrow", "Strongly Bullish for tomorrow"):
+        return "color: #16a34a; font-weight: 600"
+    if val in ("Bearish", "Strongly Bearish", "Bearish for tomorrow", "Strongly Bearish for tomorrow"):
+        return "color: #b91c1c; font-weight: 600"
+    return ""
 
-# Container for Summary (Placed right below the file uploader)
-summary_container = st.container()
 
-if uploaded_file is not None:
-  try:
-    # Read file content safely as text string
-    stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8", errors="ignore"))
-    lines = stringio.readlines()
+def show(df: pd.DataFrame, style_cols=("Bias", "Sentiment")):
+    if df is None or df.empty:
+        st.info("No matches right now.")
+        return
+    df2 = df.reset_index(drop=True).copy()
+    df2.index = [""] * len(df2)
+    present = [c for c in style_cols if c in df2.columns]
+    numeric_cols = df2.select_dtypes(include="number").columns.tolist()
+    styler = df2.style.format(precision=2, subset=numeric_cols) if numeric_cols else df2.style
+    if present:
+        style_fn = getattr(styler, "map", None) or styler.applymap
+        styler = style_fn(style_row, subset=present)
+    st.table(styler)
 
-    # Find the line index where actual table headers start
-    header_idx = 0
-    for idx, line in enumerate(lines):
-      if "Client Type" in line or (
-          "Client" in line and "Future Index Long" in line
-      ):
-        header_idx = idx
-        break
 
-    # Recreate a clean CSV stream starting from the correct header line
-    clean_csv_data = "".join(lines[header_idx:])
-    df_clean = pd.read_csv(io.StringIO(clean_csv_data))
+if "participant_history" not in st.session_state:
+    st.session_state["participant_history"] = []
 
-    # Standardize column names by stripping whitespace
-    df_clean.columns = df_clean.columns.str.strip()
+# ---------------------------------------------------------------------
+# STEP 1 — macro inputs (India VIX, Nifty PCR, cash flows, breadth)
+# ---------------------------------------------------------------------
+st.subheader("1. Market-wide inputs")
 
-    col_names = df_clean.columns.tolist()
-    client_col = col_names[0]
-    fut_idx_long_col = col_names[1]
-    fut_idx_short_col = col_names[2]
-
-    participants = ["FII", "CLIENT", "PRO", "DII"]
-
-    summary_data = []
-    for _, row in df_clean.iterrows():
-      c_type = str(row[client_col]).strip().upper()
-      if any(p == c_type for p in participants):
-        try:
-          l_val = float(str(row[fut_idx_long_col]).replace(",", ""))
-          s_val = float(str(row[fut_idx_short_col]).replace(",", ""))
-          net_val = l_val - s_val
-          summary_data.append({
-              "Participant": c_type,
-              "Index Long": l_val,
-              "Index Short": s_val,
-              "Net Index Futures": net_val,
-          })
-        except ValueError:
-          continue
-
-    if summary_data:
-      summary_df = pd.DataFrame(summary_data)
-      fii_row = summary_df[summary_df["Participant"] == "FII"]
-
-      # Display Summary right below upload section with 16px font sizing
-      with summary_container:
-        st.markdown("---")
-        st.subheader("🎯 Market Directional Bias Summary")
-
-        if not fii_row.empty:
-          fii_net = fii_row["Net Index Futures"].values[0]
-
-          col1, col2, col3 = st.columns(3)
-          with col1:
-            st.metric("FII Net Index Futures", f"{fii_net:,.0f}")
-          with col2:
-            st.metric("India VIX", f"{manual_vix}")
-          with col3:
-            st.metric("Nifty PCR", f"{manual_pcr}")
-
-          if fii_net < 0:
-            st.markdown(
-                '<p style="font-size: 16px; color: #ef4444; font-weight:'
-                ' bold;">BEARISH BIAS: FIIs are net short in Index Futures.'
-                ' Expect resistance on intraday rallies.</p>',
-                unsafe_allow_html=True,
-            )
-          else:
-            st.markdown(
-                '<p style="font-size: 16px; color: #22c55e; font-weight:'
-                ' bold;">BULLISH BIAS: FIIs are net long in Index Futures.'
-                ' Expect support on intraday dips.</p>',
-                unsafe_allow_html=True,
-            )
+if LIVE_FETCH_AVAILABLE:
+    if st.button("🌐 Fetch Live India VIX & Nifty PCR"):
+        with st.spinner("Fetching..."):
+            vix_val = fetch_india_vix()
+            pcr_val, ce_oi, pe_oi = fetch_nifty_pcr()
+        msgs = []
+        if vix_val is not None:
+            st.session_state["vix"] = str(vix_val)
+            msgs.append(f"India VIX = {vix_val}")
         else:
-          st.warning("Could not isolate FII row automatically.")
-
-        st.markdown("---")
-
-      # Detailed Tables below the summary
-      st.subheader("📊 Participant Index Futures Net Position")
-      st.dataframe(summary_df)
-
-      st.subheader("📋 Raw Data Preview")
-      st.dataframe(df_clean.head(10))
-
-    else:
-      st.warning("No matching participant rows found in the CSV structure.")
-
-  except Exception as e:
-    st.error(f"Error processing the file: {e}")
+            msgs.append("India VIX fetch failed")
+        if pcr_val is not None:
+            st.session_state["pcr"] = str(pcr_val)
+            msgs.append(f"Nifty PCR = {pcr_val} (Call OI {ce_oi:,.0f}, Put OI {pe_oi:,.0f})")
+        else:
+            msgs.append("Nifty PCR fetch failed (NSE sometimes blocks automated requests — enter it manually below)")
+        st.info(" · ".join(msgs))
 else:
-  with summary_container:
-    st.info("Please upload a valid F&O participant open interest CSV file above.")
+    st.caption("💡 Live fetch not set up yet — enter VIX and PCR manually below.")
+
+colA, colB = st.columns(2)
+with colA:
+    fii_cash_txt = st.text_input("FII Cash Net (₹ Cr)", placeholder="e.g. 1250 or -800", key="fii_cash")
+    pcr_txt = st.text_input("Nifty PCR", placeholder="e.g. 1.15", key="pcr")
+with colB:
+    dii_cash_txt = st.text_input("DII Cash Net (₹ Cr)", placeholder="e.g. 900", key="dii_cash")
+    vix_txt = st.text_input("India VIX", placeholder="e.g. 14.2", key="vix")
+ad_txt = st.text_input("Advance/Decline Ratio (optional)", placeholder="e.g. 1.8", key="ad_ratio")
+
+st.divider()
+
+# ---------------------------------------------------------------------
+# STEP 2 — FII/DII positioning from NSE Participant OI file
+# ---------------------------------------------------------------------
+st.subheader("2. FII/DII positioning (NSE Participant OI)")
+st.caption(
+    "Upload NSE's official 'Participant wise Open Interest' CSV (published free "
+    "daily on nseindia.com) — read automatically. This adds FII/DII Index "
+    "Futures and Options positioning into the combined score below."
+)
+
+
+def _process_participant_csv(text: str):
+    parsed = parse_participant_csv(text)
+    fii_row = dii_row = None
+    if parsed:
+        fii_row = parsed.get("FII")
+        dii_row = parsed.get("DII")
+        if not fii_row and not dii_row:
+            st.error("Found data but no FII or DII row — check the file.")
+            return
+    else:
+        st.error("Couldn't read that — make sure it includes the 'Client Type' header row and FII/DII rows.")
+        return
+
+    result = compute_tomorrow_sentiment(
+        fii_cash=parse_optional_float(fii_cash_txt),
+        dii_cash=parse_optional_float(dii_cash_txt),
+        pcr=parse_optional_float(pcr_txt),
+        vix=parse_optional_float(vix_txt),
+        ad_ratio=parse_optional_float(ad_txt),
+        fii_row=fii_row,
+        dii_row=dii_row,
+    )
+    st.session_state["tomorrow_result"] = result
+    if result["breakdown"]:
+        record = {
+            "date": datetime.datetime.now(IST).strftime("%d-%m-%Y"),
+            "time": datetime.datetime.now(IST).strftime("%H:%M IST"),
+            "label": result["label"],
+            "score": result["score"],
+            "breakdown": result["breakdown"],
+        }
+        hist = st.session_state["participant_history"]
+        if not hist or hist[0]["date"] != record["date"] or hist[0]["score"] != record["score"]:
+            hist.insert(0, record)
+            st.session_state["participant_history"] = hist[:7]  # keep last 7 = 1 week
+        st.success(f"Saved to weekly log: {result['label']} (score {result['score']})")
+
+
+uploaded_file = st.file_uploader("Upload NSE Participant OI CSV", type=["csv"])
+if uploaded_file is not None:
+    csv_text = uploaded_file.read().decode("utf-8", errors="ignore")
+    _process_participant_csv(csv_text)
+
+with st.expander("Or paste CSV instead"):
+    oi_text = st.text_area(
+        "NSE Participant OI CSV",
+        height=180,
+        placeholder=(
+            "Participant wise Open Interest (no. of contracts),2026\n"
+            "Client Type,Future Index Long,Future Index Short,...\n"
+            "Client,230926,61733,...\nDII,80730,15645,...\nFII,28429,295354,...\n"
+            "Pro,65692,33045,...\nTOTAL,405777,405777,..."
+        ),
+    )
+    if st.button("Analyze Pasted Data", type="primary"):
+        _process_participant_csv(oi_text)
+
+if st.button("Compute from macro inputs only (no file)"):
+    result = compute_tomorrow_sentiment(
+        fii_cash=parse_optional_float(fii_cash_txt),
+        dii_cash=parse_optional_float(dii_cash_txt),
+        pcr=parse_optional_float(pcr_txt),
+        vix=parse_optional_float(vix_txt),
+        ad_ratio=parse_optional_float(ad_txt),
+    )
+    st.session_state["tomorrow_result"] = result
+    if result["breakdown"]:
+        record = {
+            "date": datetime.datetime.now(IST).strftime("%d-%m-%Y"),
+            "time": datetime.datetime.now(IST).strftime("%H:%M IST"),
+            "label": result["label"], "score": result["score"], "breakdown": result["breakdown"],
+        }
+        hist = st.session_state["participant_history"]
+        if not hist or hist[0]["date"] != record["date"] or hist[0]["score"] != record["score"]:
+            hist.insert(0, record)
+            st.session_state["participant_history"] = hist[:7]
+
+st.divider()
+
+# ---------------------------------------------------------------------
+# RESULT — one combined score
+# ---------------------------------------------------------------------
+st.subheader("3. Tomorrow's Sentiment")
+result = st.session_state.get("tomorrow_result")
+if result and result["breakdown"]:
+    st.markdown(
+        f"""
+        <div style="border: 2px solid {result['color']}; border-radius: 10px; padding: 0.6rem 0.9rem;">
+            <span style="font-size: 13px; color: #888;">TOMORROW'S SENTIMENT:</span>
+            <span style="font-size: 18px; font-weight: 700; color: {result['color']};"> {result['label']}</span>
+            <span style="font-size: 13px; color: #888;"> (score {result['score']})</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.expander("Show logic", expanded=True):
+        for item in result["breakdown"]:
+            st.write(f"• {item['message']}")
+else:
+    st.info("Fill in step 1 and/or upload the file in step 2 to get a reading.")
+
+if st.session_state["participant_history"]:
+    st.markdown(f"**This week's log** ({len(st.session_state['participant_history'])}/7 days)")
+    week_df = pd.DataFrame([
+        {"Date": r["date"], "Time": r["time"], "Sentiment": r["label"], "Score": r["score"]}
+        for r in st.session_state["participant_history"]
+    ])
+    show(week_df)
+    for rec in st.session_state["participant_history"]:
+        with st.expander(f"{rec['date']} {rec['time']} — {rec['label']} (score {rec['score']})"):
+            for item in rec["breakdown"]:
+                st.write(f"• {item['message']}")
+    st.caption(
+        "Log lives in this browser session only — it resets if you close the tab "
+        "or the app restarts. For permanent storage across days/devices, a small "
+        "database would need to be added (tell me if you want that built)."
+    )
+
+st.divider()
+with st.expander("Stock-wise F&O OI data (optional, separate from the score above)"):
+    st.caption(
+        "One stock per line: `TICKER, % price change, % OI change`. "
+        "Price↑+OI↑=Long Buildup(bullish) · Price↑+OI↓=Short Covering(bullish) · "
+        "Price↓+OI↑=Short Buildup(bearish) · Price↓+OI↓=Long Unwinding(bearish)."
+    )
+    fno_text = st.text_area("F&O data", height=100, placeholder="RELIANCE, 2.1, 8.5\nTATASTEEL, -1.4, 6.0")
+    if st.button("Classify F&O Data"):
+        rows, skipped = parse_fno_text(fno_text)
+        if rows:
+            fno_df = pd.DataFrame(rows)
+            show(fno_df)
+            bullish_n = (fno_df["Bias"] == "Bullish").sum()
+            bearish_n = (fno_df["Bias"] == "Bearish").sum()
+            st.caption(f"{bullish_n} bullish, {bearish_n} bearish.")
+        else:
+            st.info("No valid rows found.")
+        if skipped:
+            st.caption(f"{skipped} line(s) skipped.")
