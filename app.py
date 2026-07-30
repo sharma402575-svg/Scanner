@@ -13,11 +13,8 @@ from scanner import run_full_scan_bundle
 
 st.set_page_config(page_title="Sector Trade Scanner", layout="wide", page_icon="📊")
 
-# ---------------------------------------------------------------------
 # Settings persist across refresh/auto-refresh AND across a real browser
-# reload by storing them in the URL's query string. Reloading the page,
-# or sharing the URL, keeps whatever settings were last used.
-# ---------------------------------------------------------------------
+# reload by storing them in the URL's query string.
 qp = st.query_params
 
 
@@ -33,9 +30,7 @@ def _qp_num(name, default, cast=float):
 
 with st.sidebar:
     st.header("Settings")
-    lookback = st.slider("R Factor lookback (trading days)", 5, 60, _qp_num("lookback", 20, int))
-    bull_th = st.slider("Bullish R Factor threshold (%)", 0.0, 10.0, _qp_num("bull_th", 2.0), 0.5)
-    bear_th = st.slider("Bearish R Factor threshold (%)", -10.0, 0.0, _qp_num("bear_th", -2.0), 0.5)
+    lookback = st.slider("Multi-day % change lookback (days)", 5, 60, _qp_num("lookback", 20, int))
     breakout_period = st.slider("Range breakout lookback (days)", 5, 60, _qp_num("breakout", 20, int))
     top_n = st.slider("How many rows per list", 5, 30, _qp_num("topn", 15, int))
     vol_th = st.slider("Volume surge threshold (x avg)", 1.5, 10.0, _qp_num("volth", 2.0), 0.5)
@@ -50,16 +45,15 @@ with st.sidebar:
     st.caption("Data: Yahoo Finance (delayed ~15-20 min). NSE stocks. Times shown in IST.")
     st.markdown("**How Trade Signal is calculated**")
     st.caption(
-        "Points: R Factor vs sector (±2), trend vs 20DMA (±1), RSI zone (±1), "
-        "momentum+volume (±1), 52w high/low proximity (±1), range breakout/"
-        "breakdown (±1). Score ≥4 Strong Buy, ≥2 Buy, ≤-4 Strong Sell, ≤-2 "
-        "Sell, else Hold. Rules-based heuristic — not financial advice."
+        "Points: trend vs 20DMA (±1), RSI zone (±1), 5-day momentum+volume (±1), "
+        "52w high/low proximity (±1), range breakout/breakdown (±1). Score ≥3 "
+        "Strong Buy, ≥1 Buy, ≤-3 Strong Sell, ≤-1 Sell, else Hold. This looks at "
+        "trend/momentum, not just today's move — a stock can gain today and still "
+        "score Sell if the broader trend is still down or RSI just went overbought. "
+        "Rules-based heuristic — not financial advice."
     )
 
-# Sync current settings back into the URL so a reload/share keeps them.
 st.query_params["lookback"] = str(lookback)
-st.query_params["bull_th"] = str(bull_th)
-st.query_params["bear_th"] = str(bear_th)
 st.query_params["breakout"] = str(breakout_period)
 st.query_params["topn"] = str(top_n)
 st.query_params["volth"] = str(vol_th)
@@ -73,19 +67,18 @@ st.title("📊 Sector Trade Scanner — Live Scanner")
 
 
 def style_row(val):
-    if val in ("Bullish", "Up", "Buy", "Strong Buy", "Strongly Bullish", True):
+    if val in ("Bullish", "Up", "Buy", "Strong Buy", True):
         return "color: #16a34a; font-weight: 600"
-    if val in ("Bearish", "Down", "Sell", "Strong Sell", "Strongly Bearish"):
+    if val in ("Bearish", "Down", "Sell", "Strong Sell"):
         return "color: #b91c1c; font-weight: 600"
     return ""
 
 
-def show(df: pd.DataFrame, style_cols=("Trend Signal", "Trade Signal", "Sector Bias", "Direction", "Bias")):
+def show(df: pd.DataFrame, style_cols=("Trade Signal", "Sector Bias", "Direction", "Bias")):
     """
     Renders a table in a FIXED order (whatever the scan already sorted
-    it by — most gainers/most bearish/etc. on top) with no interactive
-    column-sorting, so the order can never get scrambled by clicking a
-    header. Values shown to 2 decimals.
+    it by) with no interactive column-sorting, so the order can never
+    get scrambled by clicking a header. Values shown to 2 decimals.
     """
     if df is None or df.empty:
         st.info("No matches right now.")
@@ -110,8 +103,8 @@ should_run = manual_refresh or auto_refresh or "bundle" not in st.session_state
 if should_run:
     with st.spinner("Fetching live data and running all scans..."):
         st.session_state["bundle"] = run_full_scan_bundle(
-            lookback=lookback, rs_bull_threshold=bull_th, rs_bear_threshold=bear_th,
-            vol_threshold=vol_th, breakout_period=breakout_period, top_n=top_n,
+            lookback=lookback, vol_threshold=vol_th,
+            breakout_period=breakout_period, top_n=top_n,
         )
 
 bundle = st.session_state.get("bundle")
@@ -132,35 +125,9 @@ if auto_refresh:
     st.caption(f"Auto-refreshing every {interval_min} min.")
 
 st.caption(
-    "R Factor = stock's return minus its sector index's return. Trade Signal "
-    "is a rules-based heuristic (see sidebar) — not financial advice."
+    "Trade Signal is a rules-based heuristic combining trend, RSI, momentum, and "
+    "52w/breakout context (see sidebar) — not financial advice."
 )
-
-st.divider()
-st.header("🚀 Most bullish / bearish (whole market)")
-c1, c2 = st.columns(2)
-with c1:
-    st.subheader("Bullish")
-    show(bundle["bullish"])
-with c2:
-    st.subheader("Bearish")
-    show(bundle["bearish"])
-
-st.divider()
-st.header("📐 200 EMA crossovers")
-st.caption("Stocks that just crossed above/below their 200-day EMA — a widely-watched long-term trend flip.")
-c11, c12 = st.columns(2)
-with c11:
-    st.subheader("Crossed above (bullish)")
-    show(bundle["ema_up"])
-with c12:
-    st.subheader("Crossed below (bearish)")
-    show(bundle["ema_down"])
-
-st.divider()
-st.header("🔥 High momentum stocks")
-st.caption("Ranked by short-term rate-of-change combined with volume surge.")
-show(bundle["momentum"])
 
 st.divider()
 st.header("📈 Gainers & losers (today)")
@@ -171,6 +138,32 @@ with c3:
 with c4:
     st.subheader("Top losers")
     show(bundle["losers"])
+
+st.divider()
+st.header("🚀 Most bullish / bearish (today's gainers & losers)")
+c1, c2 = st.columns(2)
+with c1:
+    st.subheader("Bullish (top gainers)")
+    show(bundle["bullish"])
+with c2:
+    st.subheader("Bearish (top losers)")
+    show(bundle["bearish"])
+
+st.divider()
+st.header("📐 200 EMA crossovers")
+st.caption("Stocks whose close just crossed above/below their 200-day EMA — a widely-watched long-term trend flip.")
+c11, c12 = st.columns(2)
+with c11:
+    st.subheader("Crossed above (bullish)")
+    show(bundle["ema_up"])
+with c12:
+    st.subheader("Crossed below (bearish)")
+    show(bundle["ema_down"])
+
+st.divider()
+st.header("🔥 High momentum stocks")
+st.caption("Ranked by 5-day rate-of-change combined with volume surge. No R-Factor involved — purely price rate-of-change and volume.")
+show(bundle["momentum"])
 
 st.divider()
 st.header("⚡ Live volume surge alerts")
@@ -212,7 +205,7 @@ with c10:
 
 st.divider()
 st.header("🧭 Sector overview")
-st.caption("Expand a sector to see every stock in it with its own R Factor, trend and trade signal.")
+st.caption("Expand a sector to see every stock in it with its 1-day change and trade signal.")
 show(bundle["sector_agg"])
 for sector in bundle["sector_agg"]["Sector"]:
     stocks_in_sector = len(SECTOR_STOCKS[sector])
