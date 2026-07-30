@@ -2,30 +2,40 @@
 # Sector Trade Scanner
 
 A single-page NSE (India) stock scanner. One click refreshes everything
-from one consistent data snapshot, with an overall Buy/Sell signal and
-live alerts pinned at the very top.
+from one consistent data snapshot.
 
 ## What's on the page (top to bottom)
 
-1. **Most bullish / bearish** — whole-market stocks ranked by R Factor.
-2. **200 EMA crossovers** — stocks that just crossed above (bullish) or
-   below (bearish) their 200-day EMA, a widely-watched long-term trend
-   signal. Two separate lists.
-3. **Momentum** — fastest movers (rate-of-change + volume surge).
-4. **Gainers & losers** — today's biggest % movers.
+1. **Gainers & losers** — today's biggest % movers.
+2. **Most bullish / bearish** — same data as #1 (today's top gainers and
+   top losers) shown again with the Trade Signal column — R Factor used
+   to gate this list and was removed because it didn't reflect same-day
+   price action.
+3. **200 EMA crossovers** — stocks whose **close** just crossed above
+   (bullish) or below (bearish) their 200-day EMA. Two separate lists.
+4. **Momentum** — fastest movers (5-day rate-of-change + volume surge,
+   no R-Factor involved).
 5. **Volume surge alerts** — unusual volume right now.
 6. **Day high / day low** — stocks at (or within 0.3% of) today's high/low.
 7. **52-week high / low** — stocks within 3% of their 52-week high/low.
 8. **Range breakout / breakdown** — stocks closing outside their prior
    N-day trading range (N adjustable in the sidebar, default 20 days).
-9. **Sector overview** — average R Factor per sector, expandable to every
-   stock in that sector.
+9. **Sector overview** — average 1-day % change per sector, expandable to
+   every stock in that sector.
 
 Every table shows a **Trade Signal** (Strong Buy / Buy / Hold / Sell /
 Strong Sell) per stock, 2 decimal places throughout, and is rendered in a
 **fixed, pre-sorted order that cannot be re-sorted by clicking a column
-header** — most gainers/highest R Factor/etc. always stay on top exactly
-as computed.
+header**.
+
+**Why a top gainer can show "Sell" and a top loser can show "Buy":**
+Trade Signal is a separate read from today's price move — it looks at
+5-day trend vs 20DMA, RSI zone, 5-day momentum, and 52-week/breakout
+context. A stock can pop 4-5% today and still score "Sell" if it's
+still below its 20-day average, RSI just went overbought from the spike,
+or its 5-day trend is still net negative — i.e. today's move is loud but
+the underlying trend hasn't turned yet. That's intentional, not a bug,
+but it's worth knowing the two aren't measuring the same thing.
 
 ## Settings persist
 
@@ -33,13 +43,6 @@ Every sidebar setting (lookback, thresholds, auto-refresh, etc.) is saved
 into the page's URL as you change it. Reloading the browser, or sharing
 the URL with someone else, keeps those exact settings — you don't need to
 redo them each time.
-
-## R Factor
-
-```
-R Factor = stock's % return over the lookback window
-           − sector index's % return over the same window
-```
 
 ## Range Breakout / Breakdown
 
@@ -53,89 +56,59 @@ A standard definition of price breaking out of its recent trading range.
 
 | Factor | Points |
 |---|---|
-| R Factor ≥ bullish threshold / ≤ bearish threshold | +2 / -2 |
 | Price above / below 20-day moving average | +1 / -1 |
 | RSI healthy (40-65) / overbought (>75) or deeply oversold (<25) | +1 / -1 |
-| Momentum score positive / negative (with volume) | +1 / -1 |
+| 5-day momentum score positive / negative (with volume) | +1 / -1 |
 | Near 52-week high / near 52-week low | +1 / -1 |
 | Range breakout / breakdown | +1 / -1 |
 
-Score ≥ 4 → **Strong Buy** · ≥ 2 → **Buy** · -1 to 1 → **Hold** ·
-≤ -2 → **Sell** · ≤ -4 → **Strong Sell**
+Score ≥ 3 → **Strong Buy** · ≥ 1 → **Buy** · 0 → **Hold** ·
+≤ -1 → **Sell** · ≤ -3 → **Strong Sell**
 
 Rules-based heuristic combining common technical factors — not financial
 advice, and has no knowledge of news, earnings, or fundamentals.
+(R Factor — sector-relative return — was removed entirely from this
+scoring and from every filter in the app; it didn't line up with actual
+day-to-day price action.)
 
 ## Pages
 
 This is a proper multi-page Streamlit app — two separate pages, each with
 its own URL, linked from the sidebar:
 
-- **Live Scanner** (`app.py`) — everything from R Factor ranking to
-  sector overview.
+- **Live Scanner** (`app.py`) — gainers/losers, momentum, 200 EMA
+  crossovers, breakouts, 52-week levels, sector overview.
 - **FII/DII & Sentiment** (`pages/1_FII_DII_and_Sentiment.py`) — manual
   data entry, completely separate page. Refreshing or auto-refreshing the
   Live Scanner page never touches this one — it only updates when you
   click its own "Compute Sentiment" button. You can right-click its
   sidebar link and "open in new tab" for a true separate browser tab.
 
-## FII/DII & Sentiment page — Tomorrow's Call (one combined score)
+## FII/DII & Sentiment page
 
-Everything on this page feeds into **one final "Tomorrow's Sentiment"
-reading** — it used to be two separate scores in two separate boxes; now
-it's unified into a 3-step flow:
+FII/DII flows and F&O open-interest data aren't available from free data
+feeds like Yahoo Finance — this page reads them from a file you provide.
 
-**Step 1 — Market-wide inputs**: FII Cash Net, DII Cash Net, Nifty PCR,
-India VIX, Advance/Decline Ratio. VIX and PCR can be fetched live with one
-click (see below); any field can also be left blank.
-
-**Step 2 — FII/DII positioning**: upload NSE's official daily "Participant
-wise Open Interest" CSV (free, from nseindia.com) — read automatically.
-Adds FII/DII Index Futures Long % and Index Options bias (long calls +
-short puts vs short calls + long puts) into the same combined score.
-
-**Step 3 — Tomorrow's Sentiment**: one combined, weighted score across
-whatever was filled in from steps 1 and 2 — **Strongly Bullish / Bullish /
-Neutral / Bearish / Strongly Bearish for tomorrow** — with a "Show logic"
-breakdown listing exactly how every single number contributed. You can
-also compute from macro inputs alone (button below step 2) if you don't
-have the OI file yet.
-
-**Why this combination**: PCR and VIX reflect options-market fear/greed;
-FII/DII cash flow and OI positioning reflect where the big money is
-actually placed. Combined, they're the standard end-of-day read traders
-use to form a view for the next session — that's the whole point of this
-page, so they're scored together rather than separately.
-
-### Live India VIX & Nifty PCR
-
-Click **"🌐 Fetch Live India VIX & Nifty PCR"** and it auto-fills those two
-fields:
-- **India VIX** — via Yahoo Finance (`^INDIAVIX`), same reliable source as
-  the rest of the scanner.
-- **Nifty PCR** — via NSE's own public option-chain API. This isn't an
-  official documented API, so it can occasionally fail or get rate-limited
-  by NSE (especially from cloud-hosted IPs like Streamlit Cloud) — if it
-  does, the app tells you and you can just type the PCR in manually as a
-  fallback. Nothing else breaks if this fetch fails.
-
-### Uploading the Participant OI file
-
-Click "Upload NSE Participant OI CSV" and pick the `.csv` you downloaded
-from NSE — it's read and folded into the combined score automatically, no
-button click needed. A "paste instead" fallback is there if you don't
+**Upload NSE's Participant OI file**: click "Upload NSE Participant OI
+CSV" and pick the `.csv` you downloaded from nseindia.com's official,
+free, daily "Participant wise Open Interest" report — it's read and
+scored automatically. A "paste instead" fallback is there if you don't
 have the file itself.
 
-### Weekly log
+**Scoring**: reads the FII and DII rows specifically, and scores two
+things per participant — Index Futures Long % (straightforward
+directional positioning) and Index Options bias (long calls + short
+puts vs short calls + long puts). FII is weighted higher (1.5x) than DII
+(0.8x), since FII flows are the more closely watched next-day driver.
+Gives one reading: **Bullish / Bearish / Neutral for tomorrow**, with a
+"Show logic" breakdown of exactly how each number contributed.
 
-Every time a reading is computed (from either the upload or the
-"macro inputs only" button), it's saved to a rolling log — a compact
-table of date/sentiment/score, capped at the last 7 entries (a week),
-with each day expandable for the full logic used that day.
-
-Same caveat applies: this log lives only in the current browser session
-— it resets if you close the tab or the app restarts. Ask if you want
-permanent day-to-day storage added (needs a small database).
+**Weekly log**: every computed reading is saved to a rolling log — a
+compact table of date/sentiment/score, capped at the last 7 entries (a
+week), with each day expandable for the full logic used that day. This
+log lives only in the current browser session — it resets if you close
+the tab or the app restarts. Ask if you want permanent day-to-day
+storage added (needs a small database).
 
 ### Stock-wise F&O data (separate, optional tool)
 
@@ -146,8 +119,8 @@ Below the main score, a collapsed section lets you paste
 - Price↓ + OI↑ → **Short Buildup** (bearish — new shorts entering)
 - Price↓ + OI↓ → **Long Unwinding** (bearish — longs exiting)
 
-This is a per-stock lens, kept separate from (not added into) the overall
-Tomorrow's Sentiment score.
+This is a per-stock lens, kept separate from (not added into) the main
+sentiment score above.
 
 ## Dates & times
 
@@ -165,12 +138,13 @@ regardless of what timezone the app happens to be hosted in.
 
 - `sectors.py` — sector → stock list (BANK now has all 12 Nifty Bank
   constituents), sector → benchmark index.
-- `scanner.py` — `build_master_table()` computes every metric once (R
-  Factor, RSI, ATR, momentum, 52w high/low, range breakout/breakdown, 200
-  EMA crossover); `view_*` functions filter/sort it for each section.
-- `live_data.py` — live India VIX (Yahoo Finance) and Nifty PCR (NSE
-  option-chain API) fetchers, used by the sentiment page's fetch button.
-- `sentiment.py` — manual FII/DII/PCR/VIX/breadth scoring and F&O OI
+- `scanner.py` — `build_master_table()` computes every metric once (RSI,
+  ATR, momentum, 52w high/low, range breakout/breakdown, 200 EMA
+  crossover — no R Factor); `view_*` functions filter/sort it per section.
+- `live_data.py` — live India VIX / Nifty PCR fetchers. **Currently
+  unused** — the FII/DII page no longer has the macro-inputs step that
+  needed them. Safe to leave in the repo or delete; nothing imports it.
+- `sentiment.py` — FII/DII Participant-OI positioning scoring and F&O OI
   buildup classification, used by the sentiment page.
 - `app.py` — the Live Scanner page (Streamlit's "main" page — this is
   the file you deploy/run).
