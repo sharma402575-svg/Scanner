@@ -1,4 +1,4 @@
-[Uploading README.md…]()
+[README.md](https://github.com/user-attachments/files/30849375/README.md)
 # Sector Trade Scanner
 
 A single-page NSE (India) stock scanner. One click refreshes everything
@@ -83,6 +83,32 @@ its own URL, linked from the sidebar:
   Live Scanner page never touches this one — it only updates when you
   click its own "Compute Sentiment" button. You can right-click its
   sidebar link and "open in new tab" for a true separate browser tab.
+
+## Sector Rotation page (new — RRG)
+
+A third page, own URL: `pages/2_Sector_Rotation.py`. Plots a classic
+Relative Rotation Graph — every sector's **RS-Ratio** (relative strength
+vs Nifty 50, x-axis) against its **RS-Momentum** (is that strength
+accelerating, y-axis), both centered at 100, with a trailing tail of
+recent weeks so you can see each sector rotating between the four
+quadrants:
+- **Leading** (top-right) — outperforming and accelerating
+- **Weakening** (bottom-right) — still outperforming, losing steam
+- **Lagging** (bottom-left) — underperforming, still falling
+- **Improving** (top-left) — underperforming, but turning up
+
+Sectors classically rotate clockwise through these over time. A table
+below the chart shows each sector's current quadrant.
+
+**Honesty note on methodology**: the original JdK RS-Ratio/RS-Momentum
+formulas (the ones StockCharts' RRG uses) are proprietary. This uses the
+standard open approximation (z-score-normalized RS-Ratio, rate-of-change
+RS-Momentum) that's publicly documented and widely used in open-source
+RRG implementations — it produces the same quadrant behavior and rotation
+pattern, but won't match a licensed StockCharts RRG tick-for-tick.
+
+New file: `sector_rotation.py` — the RS-Ratio/Momentum computation,
+independent of `scanner.py`.
 
 ## FII/DII & Sentiment page
 
